@@ -7,16 +7,22 @@
 │   │   ├── tag.entity.ts
 │   │   ├── tag.module.ts
 │   │   └── tag.service.ts
-│   ├── users
-│   │   ├── users.controller.spec.ts
-│   │   ├── users.controller.ts
-│   │   ├── users.module.ts
-│   │   ├── users.service.spec.ts
-│   │   └── users.service.ts
+│   ├── user
+│   │   ├── dto
+│   │   │   ├── create-user.dto.ts
+│   │   │   └── login-user.dto.ts
+│   │   ├── types
+│   │   │   ├── user-response.interface.ts
+│   │   │   └── user.type.ts
+│   │   ├── user.controller.ts
+│   │   ├── user.entity.ts
+│   │   ├── user.module.ts
+│   │   └── user.service.ts
 │   ├── app.controller.spec.ts
 │   ├── app.controller.ts
 │   ├── app.module.ts
 │   ├── app.service.ts
+│   ├── config.ts
 │   ├── main.ts
 │   └── ormconfig.ts
 ├── test
@@ -87,16 +93,16 @@ export class AppController {
 ## src\app.module.ts
 
 ```typescript
+import { UserModule } from './user/user.module';
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { UsersModule } from './users/users.module';
 import { TagModule } from './tag/tag.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import ormconfig from './ormconfig';
 
 @Module({
-  imports: [UsersModule, TagModule, TypeOrmModule.forRoot(ormconfig)],
+  imports: [UserModule, TagModule, TypeOrmModule.forRoot(ormconfig)],
   controllers: [AppController],
   providers: [AppService],
 })
@@ -115,6 +121,13 @@ export class AppService {
     return 'Hello World!!!';
   }
 }
+
+```
+
+## src\config.ts
+
+```typescript
+export const JWT_SECRET = 'JWT_SECRET';
 
 ```
 
@@ -152,6 +165,7 @@ const config: DataSourceOptions = {
   entities: [__dirname + '/**/*.entity.{ts,js}'], // ✅ Исправленный путь
 
   synchronize: true,
+  // migrations: [__dirname + '/migrations/**/*{.tj, .js}'],
 };
 
 export default config;
@@ -161,7 +175,6 @@ export default config;
 ## src\tag\tag.controller.ts
 
 ```typescript
-import { TagEntity } from './tag.entity';
 import { TagService } from './tag.service';
 import { Controller, Get } from '@nestjs/common';
 
@@ -169,8 +182,11 @@ import { Controller, Get } from '@nestjs/common';
 export class TagController {
   constructor(private readonly tagService: TagService) {}
   @Get()
-  async findall(): Promise<TagEntity[]> {
-    return await this.tagService.findAll();
+  async findall() {
+    const tags = await this.tagService.findAll();
+    return {
+      tags: tags.map((tag) => tag.name),
+    };
   }
 }
 
@@ -198,8 +214,11 @@ export class TagEntity {
 import { Module } from '@nestjs/common';
 import { TagController } from './tag.controller';
 import { TagService } from './tag.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { TagEntity } from './tag.entity';
 
 @Module({
+  imports: [TypeOrmModule.forFeature([TagEntity])],
   controllers: [TagController],
   providers: [TagService],
 })
@@ -228,86 +247,246 @@ export class TagService {
 
 ```
 
-## src\users\users.controller.spec.ts
+## src\user\dto\create-user.dto.ts
 
 ```typescript
-import { Test, TestingModule } from '@nestjs/testing';
-import { UsersController } from './users.controller';
+import { IsEmail, IsNotEmpty } from 'class-validator';
 
-describe('UsersController', () => {
-  let controller: UsersController;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [UsersController],
-    }).compile();
-
-    controller = module.get<UsersController>(UsersController);
-  });
-
-  it('should be defined', () => {
-    expect(controller).toBeDefined();
-  });
-});
+export class CreateUserDto {
+  @IsNotEmpty()
+  readonly username: string;
+  @IsNotEmpty()
+  @IsEmail()
+  readonly email: string;
+  @IsNotEmpty()
+  readonly password: string;
+}
 
 ```
 
-## src\users\users.controller.ts
+## src\user\dto\login-user.dto.ts
 
 ```typescript
-import { Controller } from '@nestjs/common';
+import { IsEmail, IsNotEmpty } from 'class-validator';
 
-@Controller('users')
-export class UsersController {}
+export class LoginUserDto {
+  @IsNotEmpty()
+  @IsEmail()
+  readonly email: string;
+  @IsNotEmpty()
+  readonly password: string;
+}
 
 ```
 
-## src\users\users.module.ts
+## src\user\types\user-response.interface.ts
+
+```typescript
+import { UserEntity } from './../user.entity';
+import { UserType } from './user.type';
+
+export interface IUserResponse {
+  user: UserType & { token: string };
+}
+
+```
+
+## src\user\types\user.type.ts
+
+```typescript
+import { UserEntity } from './../user.entity';
+
+// export type UserType = Omit<UserEntity, 'hashPassword'>;
+
+export type UserType = Omit<UserEntity, 'password' | 'hashPassword'>;
+
+```
+
+## src\user\user.controller.ts
+
+```typescript
+import { LoginUserDto } from './dto/login-user.dto';
+import { IUserResponse } from './types/user-response.interface';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UserEntity } from './user.entity';
+import { UserService } from './user.service';
+import {
+  Body,
+  Controller,
+  Post,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
+
+@Controller()
+export class UserController {
+  constructor(private readonly userService: UserService) {}
+  @Post('users')
+  @UsePipes(new ValidationPipe())
+  async createUser(
+    @Body('user') createUserDto: CreateUserDto,
+  ): Promise<IUserResponse> {
+    const user = await this.userService.createUser(createUserDto);
+    return this.userService.buildUserResponce(user);
+  }
+
+  @Post('users/login')
+  @UsePipes(new ValidationPipe())
+  async login(
+    @Body('user') loginUserDto: LoginUserDto,
+  ): Promise<IUserResponse> {
+    // const user = await this.userService.login(loginUserDto);
+    //return user;
+    // return this.userService.buildUserResponce({ ...user });
+    return await this.userService.login(loginUserDto);
+  }
+}
+
+```
+
+## src\user\user.entity.ts
+
+```typescript
+import { BeforeInsert, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { hash } from 'bcrypt';
+
+@Entity({ name: 'users' })
+export class UserEntity {
+  @PrimaryGeneratedColumn()
+  id: number;
+  @Column()
+  email: string;
+  @Column()
+  username: string;
+  @Column({ default: '' })
+  bio: string;
+  @Column({ default: '' })
+  img: string;
+  @Column({ select: false })
+  password: string;
+
+  @BeforeInsert()
+  async hashPassword() {
+    this.password = await hash(this.password, 10);
+  }
+}
+
+```
+
+## src\user\user.module.ts
 
 ```typescript
 import { Module } from '@nestjs/common';
-import { UsersController } from './users.controller';
-import { UsersService } from './users.service';
+import { UserController } from './user.controller';
+import { UserService } from './user.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { UserEntity } from './user.entity';
 
 @Module({
-  controllers: [UsersController],
-  providers: [UsersService]
+  controllers: [UserController],
+  providers: [UserService],
+  imports: [TypeOrmModule.forFeature([UserEntity])],
 })
-export class UsersModule {}
+export class UserModule {}
 
 ```
 
-## src\users\users.service.spec.ts
+## src\user\user.service.ts
 
 ```typescript
-import { Test, TestingModule } from '@nestjs/testing';
-import { UsersService } from './users.service';
-
-describe('UsersService', () => {
-  let service: UsersService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [UsersService],
-    }).compile();
-
-    service = module.get<UsersService>(UsersService);
-  });
-
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-});
-
-```
-
-## src\users\users.service.ts
-
-```typescript
-import { Injectable } from '@nestjs/common';
+import { UserType } from './types/user.type';
+import { LoginUserDto } from './dto/login-user.dto';
+import { IUserResponse } from './types/user-response.interface';
+import { JWT_SECRET } from './../config';
+import { CreateUserDto } from './dto/create-user.dto';
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { UserEntity } from './user.entity';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { sign } from 'jsonwebtoken';
+import { compare } from 'bcrypt';
 
 @Injectable()
-export class UsersService {}
+export class UserService {
+  constructor(
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
+  ) {}
+  async createUser(createUserDto: CreateUserDto) {
+    const userByEmail = await this.userRepository.findOne({
+      where: { email: createUserDto.email },
+    });
+    const userByUserName = await this.userRepository.findOne({
+      where: { username: createUserDto.username },
+    });
+
+    if (userByEmail || userByUserName) {
+      throw new HttpException(
+        'Email or username are taken',
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+
+    const newUser = new UserEntity();
+    Object.assign(newUser, createUserDto);
+    return await this.userRepository.save(newUser);
+  }
+
+  generatrJwt(user: UserEntity) {
+    return sign(
+      {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+      },
+      JWT_SECRET,
+    );
+  }
+
+  buildUserResponce(user: UserEntity): IUserResponse {
+    return {
+      user: {
+        ...user,
+        token: this.generatrJwt(user),
+      },
+    };
+  }
+
+  async login(loginUserDto: LoginUserDto): Promise<IUserResponse> {
+    const user = await this.userRepository.findOne({
+      where: { email: loginUserDto.email },
+      select: ['bio', 'email', 'password', 'username', 'id', 'img'],
+      // select: ['password'],
+    });
+
+    if (!user) {
+      throw new HttpException(
+        'Credential are not found',
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+
+    const isPasswordCorrect = await compare(
+      loginUserDto.password,
+      user.password,
+    );
+
+    if (!isPasswordCorrect) {
+      throw new HttpException(
+        'Credential are not found',
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+
+    // Удаляем пароль перед возвратом
+    const { password, ...userWithoutPassword } = user;
+
+    // ✅ Теперь передаем объект правильного типа
+    return this.buildUserResponce({
+      user: { ...userWithoutPassword, token: this.generatrJwt(user) },
+    });
+  }
+}
 
 ```
 

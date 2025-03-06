@@ -7,11 +7,13 @@ export class UserEntity {
   id: number;
   @Column()
   email: string;
+  @Column()
+  username: string;
   @Column({ default: '' })
   bio: string;
   @Column({ default: '' })
   img: string;
-  @Column({ default: '' })
+  @Column({ select: false })
   password: string;
 
   @BeforeInsert()
