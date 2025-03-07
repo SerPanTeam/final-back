@@ -1,3 +1,4 @@
+import { IExpressRequest } from './../types/express-request.interface';
 import { LoginUserDto } from './dto/login-user.dto';
 import { IUserResponse } from './types/user-response.interface';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -6,7 +7,11 @@ import { UserService } from './user.service';
 import {
   Body,
   Controller,
+  Get,
+  HttpException,
+  HttpStatus,
   Post,
+  Req,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
@@ -20,7 +25,7 @@ export class UserController {
     @Body('user') createUserDto: CreateUserDto,
   ): Promise<IUserResponse> {
     const user = await this.userService.createUser(createUserDto);
-    return this.userService.buildUserResponce(user);
+    return this.userService.buildUserResponse(user);
   }
 
   @Post('users/login')
@@ -32,5 +37,16 @@ export class UserController {
     //return user;
     // return this.userService.buildUserResponce({ ...user });
     return await this.userService.login(loginUserDto);
+  }
+
+  @Get('user')
+  async currentUser(@Req() request: IExpressRequest): Promise<IUserResponse> {
+    if (!request.user) {
+      throw new HttpException(
+        'Пользователь не авторизован',
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    return this.userService.buildUserResponse(request.user);
   }
 }

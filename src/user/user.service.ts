@@ -1,7 +1,6 @@
 import { UserType } from './types/user.type';
 import { LoginUserDto } from './dto/login-user.dto';
 import { IUserResponse } from './types/user-response.interface';
-import { JWT_SECRET } from './../config';
 import { CreateUserDto } from './dto/create-user.dto';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { UserEntity } from './user.entity';
@@ -9,12 +8,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { sign } from 'jsonwebtoken';
 import { compare } from 'bcrypt';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
+    private readonly configService: ConfigService,
   ) {}
   async createUser(createUserDto: CreateUserDto) {
     const userByEmail = await this.userRepository.findOne({
@@ -36,22 +37,28 @@ export class UserService {
     return await this.userRepository.save(newUser);
   }
 
-  generatrJwt(user: UserEntity) {
+  generateJwt(user: UserEntity) {
+    const jwtSecret = this.configService.get<string>(
+      'JWT_SECRET',
+      'JWT_SECRET',
+    );
+
     return sign(
       {
         id: user.id,
         username: user.username,
         email: user.email,
       },
-      JWT_SECRET,
+      jwtSecret,
+      { expiresIn: '1d' },
     );
   }
 
-  buildUserResponce(user: UserEntity): IUserResponse {
+  buildUserResponse(user: UserEntity): IUserResponse {
     return {
       user: {
         ...user,
-        token: this.generatrJwt(user),
+        token: this.generateJwt(user),
       },
     };
   }
@@ -60,12 +67,11 @@ export class UserService {
     const user = await this.userRepository.findOne({
       where: { email: loginUserDto.email },
       select: ['bio', 'email', 'password', 'username', 'id', 'img'],
-      // select: ['password'],
     });
 
     if (!user) {
       throw new HttpException(
-        'Credential are not found',
+        'Incorrect credentials!',
         HttpStatus.UNPROCESSABLE_ENTITY,
       );
     }
@@ -77,13 +83,16 @@ export class UserService {
 
     if (!isPasswordCorrect) {
       throw new HttpException(
-        'Credential are not found',
+        'Incorrect credentials!',
         HttpStatus.UNPROCESSABLE_ENTITY,
       );
     }
 
-    // Удаляем пароль перед возвратом
     const { password, ...userWithoutPassword } = user;
-    return this.buildUserResponce(userWithoutPassword as UserEntity);
+    return this.buildUserResponse(userWithoutPassword as UserEntity);
+  }
+
+  async findById(id: number): Promise<UserEntity | null> {
+    return await this.userRepository.findOne({ where: { id } });
   }
 }

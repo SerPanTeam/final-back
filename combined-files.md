@@ -7,10 +7,14 @@
 │   │   ├── tag.entity.ts
 │   │   ├── tag.module.ts
 │   │   └── tag.service.ts
+│   ├── types
+│   │   └── express-request.interface.ts
 │   ├── user
 │   │   ├── dto
 │   │   │   ├── create-user.dto.ts
 │   │   │   └── login-user.dto.ts
+│   │   ├── middlewares
+│   │   │   └── auth.middleware.ts
 │   │   ├── types
 │   │   │   ├── user-response.interface.ts
 │   │   │   └── user.type.ts
@@ -24,10 +28,11 @@
 │   ├── app.service.ts
 │   ├── config.ts
 │   ├── main.ts
-│   └── ormconfig.ts
+│   └── orm-config.ts
 ├── test
 │   ├── app.e2e-spec.ts
 │   └── jest-e2e.json
+├── .env
 ├── .gitignore
 ├── .prettierrc
 ├── codewr.js
@@ -93,20 +98,40 @@ export class AppController {
 ## src\app.module.ts
 
 ```typescript
+import { AuthMiddleware } from './user/middlewares/auth.middleware';
 import { UserModule } from './user/user.module';
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, RequestMethod } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TagModule } from './tag/tag.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import ormconfig from './ormconfig';
+import { ormConfigFactory } from './orm-config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 
 @Module({
-  imports: [UserModule, TagModule, TypeOrmModule.forRoot(ormconfig)],
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
+    UserModule,
+    TagModule,
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) =>
+        ormConfigFactory(configService),
+    }),
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(AuthMiddleware).forRoutes({
+      path: '*',
+      method: RequestMethod.ALL,
+    });
+  }
+}
 
 ```
 
@@ -118,7 +143,7 @@ import { Injectable } from '@nestjs/common';
 @Injectable()
 export class AppService {
   getHello(): string {
-    return 'Hello World!!!';
+    return 'Hello World!';
   }
 }
 
@@ -127,48 +152,76 @@ export class AppService {
 ## src\config.ts
 
 ```typescript
-export const JWT_SECRET = 'JWT_SECRET';
+// export const JWT_SECRET = 'JWT_SECRET';
 
 ```
 
 ## src\main.ts
 
 ```typescript
-if (!process.env.IS_TS_NODE) {
-  require('module-alias/register');
-}
+// if (!process.env.IS_TS_NODE) {
+//   require('module-alias/register');
+// }
 
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Настройка Swagger
+  const config = new DocumentBuilder()
+    .setTitle('Final project API')
+    .setDescription('Project API documentation')
+    .setVersion('1.0')
+    .addBearerAuth() // Если используется JWT-авторизация
+    .build();
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api-docs', app, document);
+
   await app.listen(process.env.PORT ?? 3000);
 }
 bootstrap();
 
 ```
 
-## src\ormconfig.ts
+## src\orm-config.ts
 
 ```typescript
-import { DataSourceOptions } from 'typeorm';
+import { TypeOrmModuleOptions } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 
-const config: DataSourceOptions = {
+export const ormConfigFactory = (
+  configService: ConfigService,
+): TypeOrmModuleOptions => ({
   type: 'postgres',
-  host: 'localhost',
-  port: 5432,
-  username: 'postgres',
-  password: '36355693801',
-  database: 'db',
-  // entities: [__dirname + '/**/*.entity{.ts, .js}'],
-  entities: [__dirname + '/**/*.entity.{ts,js}'], // ✅ Исправленный путь
+  host: configService.get<string>('DB_HOST', 'localhost'),
+  // Если переменная окружения отсутствует, будет использовано значение '5432'
+  port: +configService.get<string>('DB_PORT', '5432'),
+  username: configService.get<string>('DB_USERNAME', 'postgres'),
+  password: configService.get<string>('DB_PASSWORD', 'password'),
+  database: configService.get<string>('DB_NAME', 'db'),
+  entities: [__dirname + '/**/*.entity.{ts,js}'],
+  synchronize: true, // для production лучше отключить
+});
 
-  synchronize: true,
-  // migrations: [__dirname + '/migrations/**/*{.tj, .js}'],
-};
+// import { DataSourceOptions } from 'typeorm';
 
-export default config;
+// const config: DataSourceOptions = {
+//   type: 'postgres',
+
+//   host: 'localhost',
+//   port: 5432,
+//   username: 'postgres',
+//   password: '36355693801',
+//   database: 'db',
+
+//   entities: [__dirname + '/**/*.entity.{ts,js}'], // ✅ Исправленный путь
+//   synchronize: true,
+// };
+
+// export default config;
 
 ```
 
@@ -247,6 +300,18 @@ export class TagService {
 
 ```
 
+## src\types\express-request.interface.ts
+
+```typescript
+import { UserEntity } from './../user/user.entity';
+import { Request } from 'express';
+
+export interface IExpressRequest extends Request {
+  user?: UserEntity;
+}
+
+```
+
 ## src\user\dto\create-user.dto.ts
 
 ```typescript
@@ -279,6 +344,52 @@ export class LoginUserDto {
 
 ```
 
+## src\user\middlewares\auth.middleware.ts
+
+```typescript
+import { UserService } from './../user.service';
+// import { JWT_SECRET } from './../../config';
+import { IExpressRequest } from './../../types/express-request.interface';
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { NextFunction, Request, Response } from 'express';
+import { JwtPayload, verify } from 'jsonwebtoken';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class AuthMiddleware implements NestMiddleware {
+  constructor(
+    private readonly userService: UserService,
+    private readonly configService: ConfigService,
+  ) {}
+  async use(req: IExpressRequest, res: Response, next: NextFunction) {
+    if (!req.headers.authorization) {
+      req.user = undefined;
+      next();
+      return;
+    }
+
+    const token = req.headers.authorization.split(' ')[1];
+    const jwtSecret = this.configService.get<string>(
+      'JWT_SECRET',
+      'JWT_SECRET',
+    );
+
+    try {
+      const decode = verify(token, jwtSecret) as JwtPayload;
+      const user = await this.userService.findById(decode.id);
+      if (user) req.user = user;
+      else req.user = undefined;
+      next();
+    } catch (error) {
+      console.error('Token validation error:', error);
+      req.user = undefined;
+      next();
+    }
+  }
+}
+
+```
+
 ## src\user\types\user-response.interface.ts
 
 ```typescript
@@ -305,6 +416,7 @@ export type UserType = Omit<UserEntity, 'password' | 'hashPassword'>;
 ## src\user\user.controller.ts
 
 ```typescript
+import { IExpressRequest } from './../types/express-request.interface';
 import { LoginUserDto } from './dto/login-user.dto';
 import { IUserResponse } from './types/user-response.interface';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -313,7 +425,11 @@ import { UserService } from './user.service';
 import {
   Body,
   Controller,
+  Get,
+  HttpException,
+  HttpStatus,
   Post,
+  Req,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
@@ -327,7 +443,7 @@ export class UserController {
     @Body('user') createUserDto: CreateUserDto,
   ): Promise<IUserResponse> {
     const user = await this.userService.createUser(createUserDto);
-    return this.userService.buildUserResponce(user);
+    return this.userService.buildUserResponse(user);
   }
 
   @Post('users/login')
@@ -339,6 +455,17 @@ export class UserController {
     //return user;
     // return this.userService.buildUserResponce({ ...user });
     return await this.userService.login(loginUserDto);
+  }
+
+  @Get('user')
+  async currentUser(@Req() request: IExpressRequest): Promise<IUserResponse> {
+    if (!request.user) {
+      throw new HttpException(
+        'Пользователь не авторизован',
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    return this.userService.buildUserResponse(request.user);
   }
 }
 
@@ -354,9 +481,9 @@ import { hash } from 'bcrypt';
 export class UserEntity {
   @PrimaryGeneratedColumn()
   id: number;
-  @Column()
+  @Column({ unique: true })
   email: string;
-  @Column()
+  @Column({ unique: true })
   username: string;
   @Column({ default: '' })
   bio: string;
@@ -386,6 +513,7 @@ import { UserEntity } from './user.entity';
   controllers: [UserController],
   providers: [UserService],
   imports: [TypeOrmModule.forFeature([UserEntity])],
+  exports: [UserService],
 })
 export class UserModule {}
 
@@ -397,7 +525,6 @@ export class UserModule {}
 import { UserType } from './types/user.type';
 import { LoginUserDto } from './dto/login-user.dto';
 import { IUserResponse } from './types/user-response.interface';
-import { JWT_SECRET } from './../config';
 import { CreateUserDto } from './dto/create-user.dto';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { UserEntity } from './user.entity';
@@ -405,12 +532,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { sign } from 'jsonwebtoken';
 import { compare } from 'bcrypt';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
+    private readonly configService: ConfigService,
   ) {}
   async createUser(createUserDto: CreateUserDto) {
     const userByEmail = await this.userRepository.findOne({
@@ -432,22 +561,28 @@ export class UserService {
     return await this.userRepository.save(newUser);
   }
 
-  generatrJwt(user: UserEntity) {
+  generateJwt(user: UserEntity) {
+    const jwtSecret = this.configService.get<string>(
+      'JWT_SECRET',
+      'JWT_SECRET',
+    );
+
     return sign(
       {
         id: user.id,
         username: user.username,
         email: user.email,
       },
-      JWT_SECRET,
+      jwtSecret,
+      { expiresIn: '1d' },
     );
   }
 
-  buildUserResponce(user: UserEntity): IUserResponse {
+  buildUserResponse(user: UserEntity): IUserResponse {
     return {
       user: {
         ...user,
-        token: this.generatrJwt(user),
+        token: this.generateJwt(user),
       },
     };
   }
@@ -456,12 +591,11 @@ export class UserService {
     const user = await this.userRepository.findOne({
       where: { email: loginUserDto.email },
       select: ['bio', 'email', 'password', 'username', 'id', 'img'],
-      // select: ['password'],
     });
 
     if (!user) {
       throw new HttpException(
-        'Credential are not found',
+        'Incorrect credentials!',
         HttpStatus.UNPROCESSABLE_ENTITY,
       );
     }
@@ -473,18 +607,17 @@ export class UserService {
 
     if (!isPasswordCorrect) {
       throw new HttpException(
-        'Credential are not found',
+        'Incorrect credentials!',
         HttpStatus.UNPROCESSABLE_ENTITY,
       );
     }
 
-    // Удаляем пароль перед возвратом
     const { password, ...userWithoutPassword } = user;
+    return this.buildUserResponse(userWithoutPassword as UserEntity);
+  }
 
-    // ✅ Теперь передаем объект правильного типа
-    return this.buildUserResponce({
-      user: { ...userWithoutPassword, token: this.generatrJwt(user) },
-    });
+  async findById(id: number): Promise<UserEntity | null> {
+    return await this.userRepository.findOne({ where: { id } });
   }
 }
 
