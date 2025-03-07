@@ -10,9 +10,14 @@
 │   ├── types
 │   │   └── express-request.interface.ts
 │   ├── user
+│   │   ├── decorators
+│   │   │   └── user.decorator.ts
 │   │   ├── dto
 │   │   │   ├── create-user.dto.ts
-│   │   │   └── login-user.dto.ts
+│   │   │   ├── login-user.dto.ts
+│   │   │   └── update-user.dto.ts
+│   │   ├── guards
+│   │   │   └── auth.guard.ts
 │   │   ├── middlewares
 │   │   │   └── auth.middleware.ts
 │   │   ├── types
@@ -312,6 +317,25 @@ export interface IExpressRequest extends Request {
 
 ```
 
+## src\user\decorators\user.decorator.ts
+
+```typescript
+import { IExpressRequest } from './../../types/express-request.interface';
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+
+export const User = createParamDecorator((data: any, ctx: ExecutionContext) => {
+  const request = ctx.switchToHttp().getRequest<IExpressRequest>();
+  if (!request.user) {
+    return null;
+  }
+  if (data) {
+    return request.user[data];
+  }
+  return request.user;
+});
+
+```
+
 ## src\user\dto\create-user.dto.ts
 
 ```typescript
@@ -325,6 +349,8 @@ export class CreateUserDto {
   readonly email: string;
   @IsNotEmpty()
   readonly password: string;
+  readonly img: string;
+  readonly bio: string;
 }
 
 ```
@@ -340,6 +366,50 @@ export class LoginUserDto {
   readonly email: string;
   @IsNotEmpty()
   readonly password: string;
+}
+
+```
+
+## src\user\dto\update-user.dto.ts
+
+```typescript
+import { IsEmail, IsNotEmpty } from 'class-validator';
+
+export class UpdateUserDto {
+  @IsNotEmpty()
+  readonly username: string;
+
+  @IsNotEmpty()
+  @IsEmail()
+  readonly email: string;
+
+  readonly img: string;
+  readonly bio: string;
+}
+
+```
+
+## src\user\guards\auth.guard.ts
+
+```typescript
+import { IExpressRequest } from './../../types/express-request.interface';
+import {
+  CanActivate,
+  ExecutionContext,
+  HttpException,
+  HttpStatus,
+  Injectable,
+} from '@nestjs/common';
+
+@Injectable()
+export class AuthGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest<IExpressRequest>();
+    if (request.user) {
+      return true;
+    }
+    throw new HttpException('User not authorized', HttpStatus.UNAUTHORIZED);
+  }
 }
 
 ```
@@ -416,11 +486,12 @@ export type UserType = Omit<UserEntity, 'password' | 'hashPassword'>;
 ## src\user\user.controller.ts
 
 ```typescript
-import { IExpressRequest } from './../types/express-request.interface';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { AuthGuard } from './guards/auth.guard';
+import { User } from './decorators/user.decorator';
 import { LoginUserDto } from './dto/login-user.dto';
 import { IUserResponse } from './types/user-response.interface';
 import { CreateUserDto } from './dto/create-user.dto';
-import { UserEntity } from './user.entity';
 import { UserService } from './user.service';
 import {
   Body,
@@ -429,10 +500,13 @@ import {
   HttpException,
   HttpStatus,
   Post,
+  Put,
   Req,
+  UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import { UserEntity } from './user.entity';
 
 @Controller()
 export class UserController {
@@ -451,21 +525,29 @@ export class UserController {
   async login(
     @Body('user') loginUserDto: LoginUserDto,
   ): Promise<IUserResponse> {
-    // const user = await this.userService.login(loginUserDto);
-    //return user;
-    // return this.userService.buildUserResponce({ ...user });
     return await this.userService.login(loginUserDto);
   }
 
   @Get('user')
-  async currentUser(@Req() request: IExpressRequest): Promise<IUserResponse> {
-    if (!request.user) {
-      throw new HttpException(
-        'Пользователь не авторизован',
-        HttpStatus.UNAUTHORIZED,
-      );
+  @UseGuards(AuthGuard)
+  async currentUser(@User() user: UserEntity): Promise<IUserResponse> {
+    if (!user) {
+      throw new HttpException('User not authorized', HttpStatus.UNAUTHORIZED);
     }
-    return this.userService.buildUserResponse(request.user);
+    return this.userService.buildUserResponse(user);
+  }
+
+  @Put('user')
+  @UseGuards(AuthGuard)
+  async updateCurrentUser(
+    @User('id') currentUserId: number,
+    @Body('user') updateUserDto: UpdateUserDto,
+  ): Promise<IUserResponse> {
+    const user = await this.userService.updateUser(
+      currentUserId,
+      updateUserDto,
+    );
+    return this.userService.buildUserResponse(user);
   }
 }
 
@@ -503,6 +585,7 @@ export class UserEntity {
 ## src\user\user.module.ts
 
 ```typescript
+import { AuthGuard } from './guards/auth.guard';
 import { Module } from '@nestjs/common';
 import { UserController } from './user.controller';
 import { UserService } from './user.service';
@@ -511,7 +594,7 @@ import { UserEntity } from './user.entity';
 
 @Module({
   controllers: [UserController],
-  providers: [UserService],
+  providers: [UserService, AuthGuard],
   imports: [TypeOrmModule.forFeature([UserEntity])],
   exports: [UserService],
 })
@@ -522,6 +605,7 @@ export class UserModule {}
 ## src\user\user.service.ts
 
 ```typescript
+import { UpdateUserDto } from './dto/update-user.dto';
 import { UserType } from './types/user.type';
 import { LoginUserDto } from './dto/login-user.dto';
 import { IUserResponse } from './types/user-response.interface';
@@ -618,6 +702,18 @@ export class UserService {
 
   async findById(id: number): Promise<UserEntity | null> {
     return await this.userRepository.findOne({ where: { id } });
+  }
+
+  async updateUser(
+    id: number,
+    updateUserDto: UpdateUserDto,
+  ): Promise<UserEntity> {
+    const user = await this.findById(id);
+    if (!user) {
+      throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+    }
+    Object.assign(user, updateUserDto);
+    return await this.userRepository.save(user);
   }
 }
 

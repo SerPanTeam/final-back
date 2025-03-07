@@ -1,8 +1,9 @@
-import { IExpressRequest } from './../types/express-request.interface';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { AuthGuard } from './guards/auth.guard';
+import { User } from './decorators/user.decorator';
 import { LoginUserDto } from './dto/login-user.dto';
 import { IUserResponse } from './types/user-response.interface';
 import { CreateUserDto } from './dto/create-user.dto';
-import { UserEntity } from './user.entity';
 import { UserService } from './user.service';
 import {
   Body,
@@ -11,10 +12,13 @@ import {
   HttpException,
   HttpStatus,
   Post,
+  Put,
   Req,
+  UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import { UserEntity } from './user.entity';
 
 @Controller()
 export class UserController {
@@ -33,20 +37,28 @@ export class UserController {
   async login(
     @Body('user') loginUserDto: LoginUserDto,
   ): Promise<IUserResponse> {
-    // const user = await this.userService.login(loginUserDto);
-    //return user;
-    // return this.userService.buildUserResponce({ ...user });
     return await this.userService.login(loginUserDto);
   }
 
   @Get('user')
-  async currentUser(@Req() request: IExpressRequest): Promise<IUserResponse> {
-    if (!request.user) {
-      throw new HttpException(
-        'Пользователь не авторизован',
-        HttpStatus.UNAUTHORIZED,
-      );
+  @UseGuards(AuthGuard)
+  async currentUser(@User() user: UserEntity): Promise<IUserResponse> {
+    if (!user) {
+      throw new HttpException('User not authorized', HttpStatus.UNAUTHORIZED);
     }
-    return this.userService.buildUserResponse(request.user);
+    return this.userService.buildUserResponse(user);
+  }
+
+  @Put('user')
+  @UseGuards(AuthGuard)
+  async updateCurrentUser(
+    @User('id') currentUserId: number,
+    @Body('user') updateUserDto: UpdateUserDto,
+  ): Promise<IUserResponse> {
+    const user = await this.userService.updateUser(
+      currentUserId,
+      updateUserDto,
+    );
+    return this.userService.buildUserResponse(user);
   }
 }
