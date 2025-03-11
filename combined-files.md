@@ -2,6 +2,15 @@
 
 ```plaintext
 ├── src
+│   ├── post
+│   │   ├── dto
+│   │   │   └── create-post.dto.ts
+│   │   ├── types
+│   │   │   └── post-response.interface.ts
+│   │   ├── post.controller.ts
+│   │   ├── post.entity.ts
+│   │   ├── post.module.ts
+│   │   └── post.service.ts
 │   ├── tag
 │   │   ├── tag.controller.ts
 │   │   ├── tag.entity.ts
@@ -42,6 +51,7 @@
 ├── .prettierrc
 ├── codewr.js
 ├── combined-files.md
+├── deploy.js
 ├── eslint.config.mjs
 ├── nest-cli.json
 ├── package-lock.json
@@ -53,6 +63,59 @@
 ```
 
 # Файлы .ts, .tsx, .css
+
+## deploy.js
+
+```javascript
+const FtpDeploy = require('ftp-deploy');
+const ftpDeploy = new FtpDeploy();
+
+const config = {
+  user: 'api@api.panchenko.work', // FTP логин
+  password: '36355693801', // FTP пароль
+  host: '185.67.3.96', // FTP-сервер
+  port: 21, // Явный порт FTPS
+  localRoot: __dirname, // Корневая папка проекта
+  remoteRoot: '/путь/на/сервере', // Путь на сервере, куда будут загружаться файлы
+  include: ['*', '**/*'], // Файлы, которые необходимо копировать
+  exclude: ['**/node_modules/**'], // Исключаем папку node_modules на любом уровне вложенности
+  deleteRemote: false, // Не удалять файлы на сервере, которых нет локально
+  forcePasv: true, // Режим Passive (иногда требуется для обхода firewall)
+};
+
+ftpDeploy.deploy(config, function (err) {
+  if (err) {
+    console.error('Ошибка при деплое:', err);
+  } else {
+    console.log('Деплой выполнен успешно!');
+  }
+});
+
+// const FtpDeploy = require('ftp-deploy');
+// const ftpDeploy = new FtpDeploy();
+
+// const config = {
+//   user: 'api@api.panchenko.work', // FTP логин
+//   password: '36355693801', // FTP пароль
+//   host: '185.67.3.96', // FTP-сервер
+//   port: 21, // Явный порт FTPS
+//   localRoot: __dirname + '/', // Локальная папка с собранными файлами
+//   remoteRoot: '/', // Путь на сервере, куда будут загружаться файлы
+//   include: ['*', '**/*'], // Какие файлы копировать
+//   exclude: ['node_modules', 'node_modules/**'], // Исключаем папку node_modules
+//   deleteRemote: false, // Не удалять файлы на сервере, которых нет локально
+//   forcePasv: true, // Режим Passive (часто требуется для обхода firewall)
+// };
+
+// ftpDeploy.deploy(config, function (err) {
+//   if (err) {
+//     console.error('Ошибка при деплое:', err);
+//   } else {
+//     console.log('Деплой выполнен успешно!');
+//   }
+// });
+
+```
 
 ## src\app.controller.spec.ts
 
@@ -103,6 +166,7 @@ export class AppController {
 ## src\app.module.ts
 
 ```typescript
+import { PostModule } from './post/post.module';
 import { AuthMiddleware } from './user/middlewares/auth.middleware';
 import { UserModule } from './user/user.module';
 import { MiddlewareConsumer, Module, RequestMethod } from '@nestjs/common';
@@ -119,7 +183,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       isGlobal: true,
     }),
     UserModule,
-    TagModule,
+    PostModule,
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) =>
@@ -204,9 +268,9 @@ export const ormConfigFactory = (
   host: configService.get<string>('DB_HOST', 'localhost'),
   // Если переменная окружения отсутствует, будет использовано значение '5432'
   port: +configService.get<string>('DB_PORT', '5432'),
-  username: configService.get<string>('DB_USERNAME', 'postgres'),
-  password: configService.get<string>('DB_PASSWORD', 'password'),
-  database: configService.get<string>('DB_NAME', 'db'),
+  username: configService.get<string>('DB_USERNAME', 'panchenkowork_postgres'),
+  password: configService.get<string>('DB_PASSWORD', '36355693801'),
+  database: configService.get<string>('DB_NAME', 'panchenkowork_db'),
   entities: [__dirname + '/**/*.entity.{ts,js}'],
   synchronize: true, // для production лучше отключить
 });
@@ -227,6 +291,219 @@ export const ormConfigFactory = (
 // };
 
 // export default config;
+
+```
+
+## src\post\dto\create-post.dto.ts
+
+```typescript
+import { IsNotEmpty } from 'class-validator';
+import { UserEntity } from 'src/user/user.entity';
+
+export class CreatePostDto {
+  @IsNotEmpty()
+  readonly title: string;
+
+  @IsNotEmpty()
+  readonly content: string;
+
+  @IsNotEmpty()
+  readonly img: string;
+
+  // @IsNotEmpty()
+  // readonly author: UserEntity;
+}
+
+```
+
+## src\post\post.controller.ts
+
+```typescript
+import { AuthGuard } from 'src/user/guards/auth.guard';
+import { PostService } from './post.service';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { User } from 'src/user/decorators/user.decorator';
+import { UserEntity } from 'src/user/user.entity';
+import { CreatePostDto } from './dto/create-post.dto';
+import { IPostResponse } from './types/post-response.interface';
+
+@Controller('posts')
+export class PostController {
+  constructor(private readonly postService: PostService) {}
+  @Post()
+  @UseGuards(AuthGuard)
+  async create(
+    @User() currentUser: UserEntity,
+    @Body('post') createPostDto: CreatePostDto,
+  ): Promise<IPostResponse> {
+    const post = await this.postService.createPost(currentUser, createPostDto);
+    return this.postService.bildPostResponse(post);
+  }
+  @Get(':slug')
+  async getPostBySlug(
+    @Param('slug') slug: string,
+  ): Promise<IPostResponse | undefined> {
+    const post = await this.postService.findBySlug(slug);
+    if (post) return this.postService.bildPostResponse(post);
+  }
+  @Delete(':slug')
+  @UseGuards(AuthGuard)
+  async deletePostBySlug(
+    @User('id') currentUserId: number,
+    @Param('slug') slug: string,
+  ) {
+    return await this.postService.deleteBySlug(slug, currentUserId);
+  }
+}
+
+```
+
+## src\post\post.entity.ts
+
+```typescript
+import { UserEntity } from 'src/user/user.entity';
+import {
+  AfterInsert,
+  BeforeInsert,
+  BeforeUpdate,
+  Column,
+  Entity,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+
+@Entity({ name: 'posts' })
+export class PostEntity {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  slug: string;
+
+  @Column({ default: '' })
+  title: string;
+
+  @Column({ default: '' })
+  content: string;
+
+  @Column({ default: '' })
+  img: string;
+
+  @Column('simple-array')
+  tagList: string[];
+
+  @Column({ default: 0 })
+  favoritesCount: number;
+
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  createdAt: Date;
+
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  updatedAt: Date;
+
+  @BeforeUpdate()
+  updateTimeStamp() {
+    this.updatedAt = new Date();
+  }
+
+  @ManyToOne(() => UserEntity, (user) => user.posts, { eager: true })
+  author: UserEntity;
+}
+
+```
+
+## src\post\post.module.ts
+
+```typescript
+import { PostController } from './post.controller';
+import { Module } from '@nestjs/common';
+import { PostService } from './post.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { PostEntity } from './post.entity';
+
+@Module({
+  controllers: [PostController],
+  providers: [PostService],
+  imports: [TypeOrmModule.forFeature([PostEntity])],
+})
+export class PostModule {}
+
+```
+
+## src\post\post.service.ts
+
+```typescript
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { UserEntity } from 'src/user/user.entity';
+import { CreatePostDto } from './dto/create-post.dto';
+import { PostEntity } from './post.entity';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DeleteResult, Repository } from 'typeorm';
+import { IPostResponse } from './types/post-response.interface';
+import slugify from 'slugify';
+
+@Injectable()
+export class PostService {
+  constructor(
+    @InjectRepository(PostEntity)
+    private readonly postRepository: Repository<PostEntity>,
+  ) {}
+  async createPost(
+    currentUser: UserEntity,
+    createPostDto: CreatePostDto,
+  ): Promise<PostEntity> {
+    const post = new PostEntity();
+    Object.assign(post, createPostDto);
+
+    if (!post.tagList) post.tagList = [];
+    post.slug = 'temp-slug';
+
+    post.author = currentUser;
+
+    const savedPost = await this.postRepository.save(post);
+    savedPost.slug = `${slugify(savedPost.title, { lower: true })}-${savedPost.id}`;
+    console.log(savedPost.slug);
+
+    return await this.postRepository.save(savedPost);
+  }
+  bildPostResponse(post: PostEntity): IPostResponse {
+    return { post };
+  }
+  async findBySlug(slug: string): Promise<PostEntity | null> {
+    return await this.postRepository.findOne({ where: { slug } });
+  }
+
+  async deleteBySlug(
+    slug: string,
+    currentUserId: number,
+  ): Promise<DeleteResult> {
+    const post = await this.findBySlug(slug);
+    if (!post)
+      throw new HttpException('Post does not exist', HttpStatus.NOT_FOUND);
+    if (post?.author.id !== currentUserId)
+      throw new HttpException('You are not a author', HttpStatus.FORBIDDEN);
+    return await this.postRepository.delete({ slug });
+  }
+}
+
+```
+
+## src\post\types\post-response.interface.ts
+
+```typescript
+import { PostEntity } from '../post.entity';
+
+export interface IPostResponse {
+  post: PostEntity;
+}
 
 ```
 
@@ -339,16 +616,32 @@ export const User = createParamDecorator((data: any, ctx: ExecutionContext) => {
 ## src\user\dto\create-user.dto.ts
 
 ```typescript
+import { ApiProperty } from '@nestjs/swagger';
 import { IsEmail, IsNotEmpty } from 'class-validator';
 
 export class CreateUserDto {
+  @ApiProperty({
+    description: 'Имя пользователя',
+    example: 'john_doe',
+  })
   @IsNotEmpty()
   readonly username: string;
+
+  @ApiProperty({
+    description: 'Электронная почта пользователя',
+    example: 'john@example.com',
+  })
   @IsNotEmpty()
   @IsEmail()
   readonly email: string;
+
+  @ApiProperty({
+    description: 'Пароль для пользователя',
+    example: 'P@ssw0rd123',
+  })
   @IsNotEmpty()
   readonly password: string;
+
   readonly img: string;
   readonly bio: string;
 }
@@ -507,12 +800,17 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { UserEntity } from './user.entity';
+import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
+@ApiTags('Users')
 @Controller()
 export class UserController {
   constructor(private readonly userService: UserService) {}
   @Post('users')
   @UsePipes(new ValidationPipe())
+  @ApiOperation({ summary: 'Создание нового пользователя' })
+  @ApiBody({ type: CreateUserDto })
+  @ApiResponse({ status: 201, description: 'Пользователь успешно создан.' })
   async createUser(
     @Body('user') createUserDto: CreateUserDto,
   ): Promise<IUserResponse> {
@@ -556,8 +854,16 @@ export class UserController {
 ## src\user\user.entity.ts
 
 ```typescript
-import { BeforeInsert, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  BeforeInsert,
+  Column,
+  Entity,
+  OneToMany,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { hash } from 'bcrypt';
+import { PostEntity } from 'src/post/post.entity';
+// import { PostEntity } from '@app/';
 
 @Entity({ name: 'users' })
 export class UserEntity {
@@ -578,6 +884,9 @@ export class UserEntity {
   async hashPassword() {
     this.password = await hash(this.password, 10);
   }
+
+  @OneToMany(() => PostEntity, (post) => post.author)
+  posts: PostEntity[];
 }
 
 ```

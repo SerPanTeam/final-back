@@ -1,3 +1,4 @@
+import { PostModule } from './post/post.module';
 import { AuthMiddleware } from './user/middlewares/auth.middleware';
 import { UserModule } from './user/user.module';
 import { MiddlewareConsumer, Module, RequestMethod } from '@nestjs/common';
@@ -14,7 +15,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       isGlobal: true,
     }),
     UserModule,
-    TagModule,
+    PostModule,
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) =>
