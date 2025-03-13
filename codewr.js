@@ -1,4 +1,4 @@
-'use strict'
+'use strict';
 
 // combine-files.js
 const fs = require('fs');
@@ -30,7 +30,12 @@ const generateFileTree = (dir, prefix = '') => {
   });
 
   items.forEach((item, index) => {
-    if (item.name === 'node_modules' || item.name === '.git' || item.name === 'dist') return; // Пропускаем node_modules и .git
+    if (
+      item.name === 'node_modules' ||
+      item.name === '.git' ||
+      item.name === 'dist'
+    )
+      return; // Пропускаем node_modules и .git
 
     const isLast = index === items.length - 1;
     const pointer = isLast ? '└── ' : '├── ';
@@ -59,7 +64,8 @@ const addFile = (filePath) => {
     else if (['.js', '.jsx'].includes(ext)) lang = 'javascript';
     else if (ext === '.css') lang = 'css';
     else if (ext === '.json') lang = 'json';
-    else if (ext === '.html') lang = 'html'; // Поддержка .html
+    else if (ext === '.html')
+      lang = 'html'; // Поддержка .html
     else lang = ''; // Для других типов файлов
 
     if (lang) {
@@ -72,21 +78,30 @@ const addFile = (filePath) => {
     fs.appendFileSync(outputFile, `${content}\n\`\`\`\n\n`);
   } catch (error) {
     console.error(`Ошибка при добавлении файла ${filePath}:`, error);
-    fs.appendFileSync(outputFile, `⚠️ Произошла ошибка при добавлении файла **${filePath}**.\n\n`);
+    fs.appendFileSync(
+      outputFile,
+      `⚠️ Произошла ошибка при добавлении файла **${filePath}**.\n\n`,
+    );
   }
 };
 
 // Функция для рекурсивного сбора всех .ts, .tsx, .css файлов
 const collectFiles = (dir, collectedFiles = []) => {
   const items = fs.readdirSync(dir, { withFileTypes: true });
-  items.forEach(item => {
-    if (item.name === 'codewr.js' || item.name === 'node_modules' || item.name === '.git' || item.name === 'dist') return; // Пропускаем node_modules и .git
+  items.forEach((item) => {
+    if (
+      item.name === 'codewr.js' ||
+      item.name === 'node_modules' ||
+      item.name === '.git' ||
+      item.name === 'dist'
+    )
+      return; // Пропускаем node_modules и .git
     const fullPath = path.join(dir, item.name);
     if (item.isDirectory()) {
       collectFiles(fullPath, collectedFiles);
     } else {
       const ext = path.extname(item.name).toLowerCase();
-      if (['.ts', '.tsx','.js', '.jsx', '.css'].includes(ext)) {
+      if (['.ts', '.tsx', '.js', '.jsx', '.css'].includes(ext)) {
         collectedFiles.push(fullPath);
       }
     }
@@ -107,10 +122,16 @@ console.log('🔍 Сканирование проекта...');
 try {
   // 1. Добавление дерева файлов проекта
   const fileTree = generateFileTree(__dirname);
-  fs.appendFileSync(outputFile, `# Структура проекта\n\n\`\`\`plaintext\n${fileTree}\n\`\`\`\n\n`);
+  fs.appendFileSync(
+    outputFile,
+    `# Структура проекта\n\n\`\`\`plaintext\n${fileTree}\n\`\`\`\n\n`,
+  );
 } catch (error) {
   console.error('Ошибка при генерации дерева файлов:', error);
-  fs.appendFileSync(outputFile, `⚠️ Не удалось сгенерировать структуру проекта.\n\n`);
+  fs.appendFileSync(
+    outputFile,
+    `⚠️ Не удалось сгенерировать структуру проекта.\n\n`,
+  );
 }
 
 try {
@@ -119,12 +140,15 @@ try {
 
   // Добавление содержимого собранных файлов
   fs.appendFileSync(outputFile, `# Файлы .ts, .tsx, .css\n\n`);
-  collectedFiles.forEach(file => {
+  collectedFiles.forEach((file) => {
     addFile(file);
   });
 } catch (error) {
   console.error('Ошибка при сборе файлов .ts, .tsx, .css:', error);
-  fs.appendFileSync(outputFile, `⚠️ Произошла ошибка при сборе файлов .ts, .tsx, .css.\n\n`);
+  fs.appendFileSync(
+    outputFile,
+    `⚠️ Произошла ошибка при сборе файлов .ts, .tsx, .css.\n\n`,
+  );
 }
 
 try {
@@ -143,13 +167,19 @@ try {
         addFile(fullPath);
       } else {
         console.warn(`⚠️ Файл **${file}** не найден и пропущен.`);
-        fs.appendFileSync(outputFile, `⚠️ Файл **${file}** не найден и пропущен.\n\n`);
+        fs.appendFileSync(
+          outputFile,
+          `⚠️ Файл **${file}** не найден и пропущен.\n\n`,
+        );
       }
     });
   }
 } catch (error) {
   console.error('Ошибка при добавлении дополнительных файлов:', error);
-  fs.appendFileSync(outputFile, `⚠️ Произошла ошибка при добавлении дополнительных файлов.\n\n`);
+  fs.appendFileSync(
+    outputFile,
+    `⚠️ Произошла ошибка при добавлении дополнительных файлов.\n\n`,
+  );
 }
 
 console.log(`✅ Все файлы были объединены в ${outputFile}.`);

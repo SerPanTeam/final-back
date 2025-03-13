@@ -18,7 +18,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "deploy": "npm run build && node deploy.js"
+    "deploy": "npm run build && node deploy.js",
+    "sync": "npm run build && rsync -avz -e 'ssh -i ~/.ssh/id_rsa' --exclude 'node_modules' --exclude '.git' ./ panchenkowork@185.67.3.96:/home/panchenkowork/api.panchenko.work"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

@@ -8,12 +8,14 @@ import { TagModule } from './tag/tag.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ormConfigFactory } from './orm-config';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ProfileModule } from './profile/prifile.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ProfileModule,
     UserModule,
     PostModule,
     TypeOrmModule.forRootAsync({
