@@ -8,10 +8,12 @@ import { DataSource, DeleteResult, Repository } from 'typeorm';
 import { IPostResponse } from './types/post-response.interface';
 import slugify from 'slugify';
 import { FollowEntity } from 'src/profile/follow.entity';
+import { NotificationService } from 'src/notification/notification.service';
 
 @Injectable()
 export class PostService {
   constructor(
+    private readonly notificationService: NotificationService,
     @InjectRepository(FollowEntity)
     private readonly followRepository: Repository<FollowEntity>,
     @InjectRepository(PostEntity)
@@ -160,6 +162,15 @@ export class PostService {
       post.favoritesCount++;
       await this.userRepository.save(user);
       await this.postRepository.save(post);
+
+      // Создаём уведомление для автора поста:
+      if (post.author.id !== currentUserId) {
+        await this.notificationService.createNotification(
+          post.author, // пользователь, которому придёт уведомление
+          'favorite',
+          `Пользователь @${user.username} поставил лайк на ваш пост "${post.title}"`,
+        );
+      }
     }
     return post;
   }

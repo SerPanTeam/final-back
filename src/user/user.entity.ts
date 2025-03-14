@@ -9,6 +9,8 @@ import {
 } from 'typeorm';
 import { hash } from 'bcrypt';
 import { PostEntity } from 'src/post/post.entity';
+import { CommentEntity } from 'src/comment/comment.entity';
+import { NotificationEntity } from 'src/notification/notification.entity';
 // import { PostEntity } from '@app/';
 
 @Entity({ name: 'users' })
@@ -37,4 +39,12 @@ export class UserEntity {
   @ManyToMany(() => PostEntity)
   @JoinTable()
   favorites: PostEntity[];
+
+  @OneToMany(() => CommentEntity, (comment) => comment.author)
+  comments: CommentEntity[];
+
+  @OneToMany(() => NotificationEntity, (notification) => notification.user, {
+    cascade: true,
+  })
+  notifications: NotificationEntity[];
 }

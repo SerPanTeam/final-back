@@ -13,7 +13,7 @@ import {
   HttpStatus,
   Post,
   Put,
-  Req,
+  Query,
   UseGuards,
   UsePipes,
   ValidationPipe,
@@ -47,7 +47,7 @@ export class UserController {
 
   @Get('user')
   @UseGuards(AuthGuard)
-  async currentUser(@User() user: UserEntity): Promise<IUserResponse> {
+  currentUser(@User() user: UserEntity): IUserResponse {
     if (!user) {
       throw new HttpException('User not authorized', HttpStatus.UNAUTHORIZED);
     }
@@ -65,5 +65,12 @@ export class UserController {
       updateUserDto,
     );
     return this.userService.buildUserResponse(user);
+  }
+
+  @Get('users/search')
+  async searchUsers(@Query('username') username: string) {
+    // Можно искать по логину или части логина
+    const results = await this.userService.searchByUsername(username);
+    return { users: results };
   }
 }

@@ -4,17 +4,22 @@ import { UserModule } from './user/user.module';
 import { MiddlewareConsumer, Module, RequestMethod } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { TagModule } from './tag/tag.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ormConfigFactory } from './orm-config';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ProfileModule } from './profile/prifile.module';
+import { NotificationModule } from './notification/notification.module';
+import { ChatModule } from './chat/chat.module';
+import { CommentModule } from './comment/comment.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    CommentModule,
+    ChatModule,
+    NotificationModule,
     ProfileModule,
     UserModule,
     PostModule,

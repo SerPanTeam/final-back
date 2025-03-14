@@ -2,6 +2,22 @@
 
 ```plaintext
 ├── src
+│   ├── chat
+│   │   ├── chat.gateway.ts
+│   │   ├── chat.module.ts
+│   │   └── message.entity.ts
+│   ├── comment
+│   │   ├── dto
+│   │   │   └── create-comment.dto.ts
+│   │   ├── comment.controller.ts
+│   │   ├── comment.entity.ts
+│   │   ├── comment.module.ts
+│   │   └── comment.service.ts
+│   ├── notification
+│   │   ├── notification.controller.ts
+│   │   ├── notification.entity.ts
+│   │   ├── notification.module.ts
+│   │   └── notification.service.ts
 │   ├── post
 │   │   ├── dto
 │   │   │   └── create-post.dto.ts
@@ -21,11 +37,6 @@
 │   │   ├── prifile.module.ts
 │   │   ├── profile.controller.ts
 │   │   └── profile.service.ts
-│   ├── tag
-│   │   ├── tag.controller.ts
-│   │   ├── tag.entity.ts
-│   │   ├── tag.module.ts
-│   │   └── tag.service.ts
 │   ├── types
 │   │   └── express-request.interface.ts
 │   ├── user
@@ -226,17 +237,22 @@ import { UserModule } from './user/user.module';
 import { MiddlewareConsumer, Module, RequestMethod } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { TagModule } from './tag/tag.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ormConfigFactory } from './orm-config';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ProfileModule } from './profile/prifile.module';
+import { NotificationModule } from './notification/notification.module';
+import { ChatModule } from './chat/chat.module';
+import { CommentModule } from './comment/comment.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    CommentModule,
+    ChatModule,
+    NotificationModule,
     ProfileModule,
     UserModule,
     PostModule,
@@ -274,6 +290,361 @@ export class AppService {
 
 ```
 
+## src\chat\chat.gateway.ts
+
+```typescript
+import {
+  WebSocketGateway,
+  WebSocketServer,
+  SubscribeMessage,
+  MessageBody,
+  ConnectedSocket,
+} from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { MessageEntity } from './message.entity';
+import { UserEntity } from 'src/user/user.entity';
+
+@WebSocketGateway({
+  cors: {
+    origin: '*', // при необходимости указать конкретные адреса
+  },
+})
+export class ChatGateway {
+  @WebSocketServer()
+  server: Server;
+
+  constructor(
+    @InjectRepository(MessageEntity)
+    private readonly messageRepository: Repository<MessageEntity>,
+  ) {}
+
+  // Пользователь (клиент) вызывает событие 'joinRoom' и передаёт ID комнаты, чтобы "зайти" в неё
+  @SubscribeMessage('joinRoom')
+  handleJoinRoom(
+    @MessageBody() data: { roomId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { roomId } = data;
+    client.join(roomId);
+    client.emit('joinedRoom', { roomId });
+  }
+
+  // Отправка сообщения: клиент вызывает 'sendMessage' и передаёт roomId, senderId, recipientId, content
+  @SubscribeMessage('sendMessage')
+  async handleSendMessage(
+    @MessageBody()
+    data: {
+      roomId: string;
+      senderId: number;
+      recipientId: number;
+      content: string;
+    },
+    @ConnectedSocket() client: Socket,
+  ) {
+    // 1. Сохраняем сообщение в БД (если нужно)
+    const message = new MessageEntity();
+    message.content = data.content;
+    // Здесь вам надо найти UserEntity по ID
+    // Но для упрощения примера пропустим детализацию. Если очень нужно:
+    // const sender = await this.userRepository.findOne({ where: { id: data.senderId } });
+    // const recipient = await this.userRepository.findOne({ where: { id: data.recipientId } });
+    // message.sender = sender;
+    // message.recipient = recipient;
+
+    // Если у вас нет userRepository, можно сохранить чисто ID, но тогда нужна дополнительная логика
+    // Или сделаем так (будет ошибка, если юзера не найдёт):
+    const sender = new UserEntity();
+    sender.id = data.senderId;
+    message.sender = sender;
+
+    const recipient = new UserEntity();
+    recipient.id = data.recipientId;
+    message.recipient = recipient;
+
+    await this.messageRepository.save(message);
+
+    // 2. Отправляем (broadcast) это сообщение в комнату roomId
+    this.server.to(data.roomId).emit('receiveMessage', {
+      id: message.id,
+      content: message.content,
+      senderId: data.senderId,
+      recipientId: data.recipientId,
+      createdAt: message.createdAt,
+    });
+  }
+}
+
+```
+
+## src\chat\chat.module.ts
+
+```typescript
+import { Module } from '@nestjs/common';
+import { ChatGateway } from './chat.gateway';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { MessageEntity } from './message.entity';
+
+@Module({
+  imports: [TypeOrmModule.forFeature([MessageEntity])],
+  providers: [ChatGateway],
+})
+export class ChatModule {}
+
+```
+
+## src\chat\message.entity.ts
+
+```typescript
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  CreateDateColumn,
+} from 'typeorm';
+import { UserEntity } from 'src/user/user.entity';
+
+@Entity({ name: 'messages' })
+export class MessageEntity {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  content: string;
+
+  // Отправитель
+  @ManyToOne(() => UserEntity, { eager: true })
+  sender: UserEntity;
+
+  // Получатель
+  @ManyToOne(() => UserEntity, { eager: true })
+  recipient: UserEntity;
+
+  @CreateDateColumn()
+  createdAt: Date;
+}
+
+```
+
+## src\comment\comment.controller.ts
+
+```typescript
+// src/comment/comment.controller.ts
+
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  UseGuards,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
+import { CommentService } from './comment.service';
+import { AuthGuard } from 'src/user/guards/auth.guard';
+import { User } from 'src/user/decorators/user.decorator';
+import { UserEntity } from 'src/user/user.entity';
+import { CreateCommentDto } from './dto/create-comment.dto';
+import { CommentEntity } from './comment.entity';
+
+@Controller('posts/:slug/comments')
+export class CommentController {
+  constructor(private readonly commentService: CommentService) {}
+
+  @Get()
+  async getComments(@Param('slug') slug: string): Promise<CommentEntity[]> {
+    return this.commentService.findCommentsBySlug(slug);
+  }
+
+  @Post()
+  @UseGuards(AuthGuard)
+  @UsePipes(new ValidationPipe())
+  async createComment(
+    @User() currentUser: UserEntity,
+    @Param('slug') slug: string,
+    @Body('comment') createCommentDto: CreateCommentDto,
+  ): Promise<CommentEntity> {
+    return this.commentService.createComment(
+      currentUser,
+      slug,
+      createCommentDto,
+    );
+  }
+
+  @Delete(':commentId')
+  @UseGuards(AuthGuard)
+  async deleteComment(
+    @User('id') currentUserId: number,
+    @Param('slug') slug: string,
+    @Param('commentId') commentId: number,
+  ) {
+    return this.commentService.deleteComment(slug, commentId, currentUserId);
+  }
+}
+
+```
+
+## src\comment\comment.entity.ts
+
+```typescript
+// src/comment/comment.entity.ts
+
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { UserEntity } from 'src/user/user.entity';
+import { PostEntity } from 'src/post/post.entity';
+
+@Entity({ name: 'comments' })
+export class CommentEntity {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  body: string;
+
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  createdAt: Date;
+
+  // Автор комментария
+  @ManyToOne(() => UserEntity, (user) => user.comments, { eager: true })
+  author: UserEntity;
+
+  // Пост, к которому принадлежит комментарий
+  @ManyToOne(() => PostEntity, (post) => post.comments, { onDelete: 'CASCADE' })
+  post: PostEntity;
+}
+
+```
+
+## src\comment\comment.module.ts
+
+```typescript
+// src/comment/comment.module.ts
+
+import { Module } from '@nestjs/common';
+import { CommentController } from './comment.controller';
+import { CommentService } from './comment.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { CommentEntity } from './comment.entity';
+import { PostEntity } from 'src/post/post.entity';
+import { NotificationModule } from 'src/notification/notification.module';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([CommentEntity, PostEntity]),
+    NotificationModule,
+  ],
+  controllers: [CommentController],
+  providers: [CommentService],
+})
+export class CommentModule {}
+
+```
+
+## src\comment\comment.service.ts
+
+```typescript
+// src/comment/comment.service.ts
+
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { CommentEntity } from './comment.entity';
+import { Repository } from 'typeorm';
+import { PostEntity } from 'src/post/post.entity';
+import { UserEntity } from 'src/user/user.entity';
+import { CreateCommentDto } from './dto/create-comment.dto';
+import { NotificationService } from 'src/notification/notification.service';
+
+@Injectable()
+export class CommentService {
+  constructor(
+    private readonly notificationService: NotificationService,
+    @InjectRepository(CommentEntity)
+    private readonly commentRepository: Repository<CommentEntity>,
+    @InjectRepository(PostEntity)
+    private readonly postRepository: Repository<PostEntity>,
+  ) {}
+
+  async createComment(
+    user: UserEntity,
+    slug: string,
+    createCommentDto: CreateCommentDto,
+  ): Promise<CommentEntity> {
+    const post = await this.postRepository.findOne({ where: { slug } });
+    if (!post) {
+      throw new HttpException('Post not found', HttpStatus.NOT_FOUND);
+    }
+
+    const newComment = new CommentEntity();
+    newComment.body = createCommentDto.body;
+    newComment.author = user;
+    newComment.post = post;
+
+    await this.notificationService.createNotification(
+      post.author,
+      'comment',
+      `New comment from ${user.username} on your post "${post.title}"`,
+    );
+
+    return await this.commentRepository.save(newComment);
+  }
+
+  async deleteComment(
+    slug: string,
+    commentId: number,
+    currentUserId: number,
+  ): Promise<any> {
+    const comment = await this.commentRepository.findOne({
+      where: { id: commentId },
+      relations: ['author', 'post'],
+    });
+    if (!comment) {
+      throw new HttpException('Comment not found', HttpStatus.NOT_FOUND);
+    }
+    if (comment.post.slug !== slug) {
+      throw new HttpException(
+        'Comment does not belong to this post',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (comment.author.id !== currentUserId) {
+      throw new HttpException(
+        'Not authorized to delete this comment',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    return await this.commentRepository.delete({ id: commentId });
+  }
+
+  async findCommentsBySlug(slug: string): Promise<CommentEntity[]> {
+    // Для удобства можно вместо "post.slug" просто делать JOIN. Но для простоты:
+    const comments = await this.commentRepository.find({
+      where: { post: { slug } },
+      order: { createdAt: 'ASC' },
+    });
+    return comments;
+  }
+}
+
+```
+
+## src\comment\dto\create-comment.dto.ts
+
+```typescript
+// src/comment/dto/create-comment.dto.ts
+
+import { IsNotEmpty } from 'class-validator';
+
+export class CreateCommentDto {
+  @IsNotEmpty()
+  readonly body: string;
+}
+
+```
+
 ## src\config.ts
 
 ```typescript
@@ -294,6 +665,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.enableCors();
 
   // Настройка Swagger
   const config = new DocumentBuilder()
@@ -304,10 +676,153 @@ async function bootstrap() {
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api-docs', app, document);
-  app.enableCors();
   await app.listen(process.env.PORT ?? 3000);
 }
 bootstrap();
+
+```
+
+## src\notification\notification.controller.ts
+
+```typescript
+import { Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { NotificationService } from './notification.service';
+import { AuthGuard } from 'src/user/guards/auth.guard';
+import { User } from 'src/user/decorators/user.decorator';
+import { NotificationEntity } from './notification.entity';
+
+@Controller('notifications')
+export class NotificationController {
+  constructor(private readonly notificationService: NotificationService) {}
+
+  // Получить все уведомления текущего пользователя
+  @Get()
+  @UseGuards(AuthGuard)
+  async getMyNotifications(
+    @User('id') currentUserId: number,
+  ): Promise<NotificationEntity[]> {
+    return this.notificationService.getUserNotifications(currentUserId);
+  }
+
+  // Пометить конкретное уведомление как прочитанное
+  @Patch(':id/read')
+  @UseGuards(AuthGuard)
+  async markNotificationAsRead(
+    @User('id') currentUserId: number,
+    @Param('id') notificationId: number,
+  ) {
+    return this.notificationService.markAsRead(notificationId, currentUserId);
+  }
+}
+
+```
+
+## src\notification\notification.entity.ts
+
+```typescript
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  CreateDateColumn,
+  BaseEntity,
+} from 'typeorm';
+import { UserEntity } from 'src/user/user.entity';
+
+@Entity({ name: 'notifications' })
+export class NotificationEntity extends BaseEntity {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  type: string; // Например: 'favorite', 'comment', 'follow'
+
+  @Column()
+  message: string; // Короткое описание, что произошло
+
+  // Пользователь, который получает это уведомление
+  @ManyToOne(() => UserEntity, (user) => user.notifications, { eager: false })
+  user: UserEntity;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @Column({ default: false })
+  isRead: boolean;
+}
+
+```
+
+## src\notification\notification.module.ts
+
+```typescript
+import { Module } from '@nestjs/common';
+import { NotificationService } from './notification.service';
+import { NotificationController } from './notification.controller';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { NotificationEntity } from './notification.entity';
+
+@Module({
+  imports: [TypeOrmModule.forFeature([NotificationEntity])],
+  controllers: [NotificationController],
+  providers: [NotificationService],
+  exports: [NotificationService], // чтобы другие модули могли вызывать createNotification
+})
+export class NotificationModule {}
+
+```
+
+## src\notification\notification.service.ts
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { NotificationEntity } from './notification.entity';
+import { Repository } from 'typeorm';
+import { UserEntity } from 'src/user/user.entity';
+
+@Injectable()
+export class NotificationService {
+  constructor(
+    @InjectRepository(NotificationEntity)
+    private readonly notificationRepository: Repository<NotificationEntity>,
+  ) {}
+
+  // Создание уведомления, например, при лайке, комментарии, подписке
+  async createNotification(
+    user: UserEntity,
+    type: string,
+    message: string,
+  ): Promise<NotificationEntity> {
+    const notification = new NotificationEntity();
+    notification.user = user; // кому уходит уведомление
+    notification.type = type;
+    notification.message = message;
+    return await this.notificationRepository.save(notification);
+  }
+
+  // Получить все уведомления пользователя
+  async getUserNotifications(userId: number): Promise<NotificationEntity[]> {
+    return this.notificationRepository.find({
+      where: { user: { id: userId } },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  // Пометить уведомление как прочитанное
+  async markAsRead(notificationId: number, userId: number): Promise<void> {
+    const notification = await this.notificationRepository.findOne({
+      where: { id: notificationId },
+      relations: ['user'],
+    });
+    if (!notification || notification.user.id !== userId) {
+      return;
+    }
+    notification.isRead = true;
+    await this.notificationRepository.save(notification);
+  }
+}
 
 ```
 
@@ -495,14 +1010,14 @@ export class PostController {
 ## src\post\post.entity.ts
 
 ```typescript
+import { CommentEntity } from 'src/comment/comment.entity';
 import { UserEntity } from 'src/user/user.entity';
 import {
-  AfterInsert,
-  BeforeInsert,
   BeforeUpdate,
   Column,
   Entity,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 
@@ -542,6 +1057,9 @@ export class PostEntity {
 
   @ManyToOne(() => UserEntity, (user) => user.posts, { eager: true })
   author: UserEntity;
+
+  @OneToMany(() => CommentEntity, (comment) => comment.post, { eager: true })
+  comments: CommentEntity[];
 }
 
 ```
@@ -556,11 +1074,15 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { PostEntity } from './post.entity';
 import { UserEntity } from 'src/user/user.entity';
 import { FollowEntity } from 'src/profile/follow.entity';
+import { NotificationModule } from 'src/notification/notification.module';
 
 @Module({
   controllers: [PostController],
   providers: [PostService],
-  imports: [TypeOrmModule.forFeature([PostEntity, UserEntity, FollowEntity])],
+  imports: [
+    TypeOrmModule.forFeature([PostEntity, UserEntity, FollowEntity]),
+    NotificationModule,
+  ],
 })
 export class PostModule {}
 
@@ -579,10 +1101,12 @@ import { DataSource, DeleteResult, Repository } from 'typeorm';
 import { IPostResponse } from './types/post-response.interface';
 import slugify from 'slugify';
 import { FollowEntity } from 'src/profile/follow.entity';
+import { NotificationService } from 'src/notification/notification.service';
 
 @Injectable()
 export class PostService {
   constructor(
+    private readonly notificationService: NotificationService,
     @InjectRepository(FollowEntity)
     private readonly followRepository: Repository<FollowEntity>,
     @InjectRepository(PostEntity)
@@ -731,6 +1255,15 @@ export class PostService {
       post.favoritesCount++;
       await this.userRepository.save(user);
       await this.postRepository.save(post);
+
+      // Создаём уведомление для автора поста:
+      if (post.author.id !== currentUserId) {
+        await this.notificationService.createNotification(
+          post.author, // пользователь, которому придёт уведомление
+          'favorite',
+          `Пользователь @${user.username} поставил лайк на ваш пост "${post.title}"`,
+        );
+      }
     }
     return post;
   }
@@ -819,9 +1352,13 @@ import { ProflileController } from './profile.controller';
 import { ProfileService } from './profile.service';
 import { UserEntity } from 'src/user/user.entity';
 import { FollowEntity } from './follow.entity';
+import { NotificationModule } from 'src/notification/notification.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([UserEntity, FollowEntity])],
+  imports: [
+    TypeOrmModule.forFeature([UserEntity, FollowEntity]),
+    NotificationModule,
+  ],
   controllers: [ProflileController],
   providers: [ProfileService],
 })
@@ -900,10 +1437,12 @@ import { IProfileResponse } from './types/profile-response.interface';
 import { InjectRepository } from '@nestjs/typeorm';
 import { UserEntity } from 'src/user/user.entity';
 import { Repository } from 'typeorm';
+import { NotificationService } from 'src/notification/notification.service';
 
 @Injectable()
 export class ProfileService {
   constructor(
+    private readonly notificationService: NotificationService,
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
     @InjectRepository(FollowEntity)
@@ -975,6 +1514,13 @@ export class ProfileService {
       );
     }
 
+    // Если user.id != currentUserId, то уведомить user
+    await this.notificationService.createNotification(
+      user, // получает уведомление
+      'follow',
+      `Пользователь @${user.username} подписался на вас`,
+    );
+
     await this.followRepository.delete({
       followerId: currentUserId,
       followingId: user.id,
@@ -1007,81 +1553,6 @@ export interface IProfileResponse {
 import { UserType } from 'src/user/types/user.type';
 
 export type ProfileType = UserType & { following: boolean };
-
-```
-
-## src\tag\tag.controller.ts
-
-```typescript
-import { TagService } from './tag.service';
-import { Controller, Get } from '@nestjs/common';
-
-@Controller('tags')
-export class TagController {
-  constructor(private readonly tagService: TagService) {}
-  @Get()
-  async findall() {
-    const tags = await this.tagService.findAll();
-    return {
-      tags: tags.map((tag) => tag.name),
-    };
-  }
-}
-
-```
-
-## src\tag\tag.entity.ts
-
-```typescript
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
-
-@Entity({ name: 'tags' })
-export class TagEntity {
-  @PrimaryGeneratedColumn()
-  id: number;
-
-  @Column()
-  name: string;
-}
-
-```
-
-## src\tag\tag.module.ts
-
-```typescript
-import { Module } from '@nestjs/common';
-import { TagController } from './tag.controller';
-import { TagService } from './tag.service';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { TagEntity } from './tag.entity';
-
-@Module({
-  imports: [TypeOrmModule.forFeature([TagEntity])],
-  controllers: [TagController],
-  providers: [TagService],
-})
-export class TagModule {}
-
-```
-
-## src\tag\tag.service.ts
-
-```typescript
-import { Injectable } from '@nestjs/common';
-import { TagEntity } from './tag.entity';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-
-@Injectable()
-export class TagService {
-  constructor(
-    @InjectRepository(TagEntity)
-    private readonly tagRepository: Repository<TagEntity>,
-  ) {}
-  async findAll(): Promise<TagEntity[]> {
-    return await this.tagRepository.find();
-  }
-}
 
 ```
 
@@ -1297,7 +1768,7 @@ import {
   HttpStatus,
   Post,
   Put,
-  Req,
+  Query,
   UseGuards,
   UsePipes,
   ValidationPipe,
@@ -1331,7 +1802,7 @@ export class UserController {
 
   @Get('user')
   @UseGuards(AuthGuard)
-  async currentUser(@User() user: UserEntity): Promise<IUserResponse> {
+  currentUser(@User() user: UserEntity): IUserResponse {
     if (!user) {
       throw new HttpException('User not authorized', HttpStatus.UNAUTHORIZED);
     }
@@ -1349,6 +1820,13 @@ export class UserController {
       updateUserDto,
     );
     return this.userService.buildUserResponse(user);
+  }
+
+  @Get('users/search')
+  async searchUsers(@Query('username') username: string) {
+    // Можно искать по логину или части логина
+    const results = await this.userService.searchByUsername(username);
+    return { users: results };
   }
 }
 
@@ -1368,6 +1846,8 @@ import {
 } from 'typeorm';
 import { hash } from 'bcrypt';
 import { PostEntity } from 'src/post/post.entity';
+import { CommentEntity } from 'src/comment/comment.entity';
+import { NotificationEntity } from 'src/notification/notification.entity';
 // import { PostEntity } from '@app/';
 
 @Entity({ name: 'users' })
@@ -1396,6 +1876,14 @@ export class UserEntity {
   @ManyToMany(() => PostEntity)
   @JoinTable()
   favorites: PostEntity[];
+
+  @OneToMany(() => CommentEntity, (comment) => comment.author)
+  comments: CommentEntity[];
+
+  @OneToMany(() => NotificationEntity, (notification) => notification.user, {
+    cascade: true,
+  })
+  notifications: NotificationEntity[];
 }
 
 ```
@@ -1431,7 +1919,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { UserEntity } from './user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ILike, Repository } from 'typeorm';
 import { sign } from 'jsonwebtoken';
 import { compare } from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
@@ -1532,6 +2020,16 @@ export class UserService {
     }
     Object.assign(user, updateUserDto);
     return await this.userRepository.save(user);
+  }
+
+  // src/user/user.service.ts
+  // ...
+  async searchByUsername(username: string): Promise<UserEntity[]> {
+    if (!username) return [];
+    return this.userRepository.find({
+      where: { username: ILike(`%${username}%`) }, // ILike - если нужен case-insensitive поиск
+      take: 20,
+    });
   }
 }
 

@@ -5,10 +5,12 @@ import { IProfileResponse } from './types/profile-response.interface';
 import { InjectRepository } from '@nestjs/typeorm';
 import { UserEntity } from 'src/user/user.entity';
 import { Repository } from 'typeorm';
+import { NotificationService } from 'src/notification/notification.service';
 
 @Injectable()
 export class ProfileService {
   constructor(
+    private readonly notificationService: NotificationService,
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
     @InjectRepository(FollowEntity)
@@ -79,6 +81,13 @@ export class ProfileService {
         HttpStatus.BAD_REQUEST,
       );
     }
+
+    // Если user.id != currentUserId, то уведомить user
+    await this.notificationService.createNotification(
+      user, // получает уведомление
+      'follow',
+      `Пользователь @${user.username} подписался на вас`,
+    );
 
     await this.followRepository.delete({
       followerId: currentUserId,

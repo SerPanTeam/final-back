@@ -6,7 +6,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { UserEntity } from './user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ILike, Repository } from 'typeorm';
 import { sign } from 'jsonwebtoken';
 import { compare } from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
@@ -107,5 +107,15 @@ export class UserService {
     }
     Object.assign(user, updateUserDto);
     return await this.userRepository.save(user);
+  }
+
+  // src/user/user.service.ts
+  // ...
+  async searchByUsername(username: string): Promise<UserEntity[]> {
+    if (!username) return [];
+    return this.userRepository.find({
+      where: { username: ILike(`%${username}%`) }, // ILike - если нужен case-insensitive поиск
+      take: 20,
+    });
   }
 }
