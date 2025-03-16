@@ -39,6 +39,7 @@
 │   │   └── profile.service.ts
 │   ├── types
 │   │   └── express-request.interface.ts
+│   ├── uploads
 │   ├── user
 │   │   ├── decorators
 │   │   │   └── user.decorator.ts
@@ -63,10 +64,14 @@
 │   ├── app.service.ts
 │   ├── config.ts
 │   ├── main.ts
-│   └── orm-config.ts
+│   ├── orm-config.ts
+│   └── seed.ts
 ├── test
 │   ├── app.e2e-spec.ts
 │   └── jest-e2e.json
+├── uploads
+│   ├── avatars
+│   └── posts
 ├── .env
 ├── .gitignore
 ├── .prettierrc
@@ -655,9 +660,8 @@ export class CreateCommentDto {
 ## src\main.ts
 
 ```typescript
-// if (!process.env.IS_TS_NODE) {
-//   require('module-alias/register');
-// }
+import { join } from 'path';
+import * as express from 'express';
 
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
@@ -666,6 +670,8 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableCors();
+
+  app.use('/uploads', express.static(join(__dirname, '..', 'uploads')));
 
   // Настройка Swagger
   const config = new DocumentBuilder()
@@ -893,6 +899,7 @@ export class CreatePostDto {
 import { AuthGuard } from 'src/user/guards/auth.guard';
 import { PostService } from './post.service';
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -901,7 +908,9 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
@@ -910,6 +919,9 @@ import { UserEntity } from 'src/user/user.entity';
 import { CreatePostDto } from './dto/create-post.dto';
 import { IPostResponse } from './types/post-response.interface';
 import { IPostsResponse } from './types/posts-response.interface';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
 
 @Controller('posts')
 export class PostController {
@@ -1002,6 +1014,43 @@ export class PostController {
     );
     if (post) return this.postService.bildPostResponse(post);
     else return null as any;
+  }
+
+  @Post(':slug/uploadImage')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: diskStorage({
+        destination: './uploads/posts',
+        filename: (req, file, callback) => {
+          const ext = extname(file.originalname);
+          const fileName = `post_${Date.now()}${ext}`;
+          callback(null, fileName);
+        },
+      }),
+      limits: { fileSize: 5 * 1024 * 1024 }, // ограничение ~5MB
+    }),
+  )
+  async uploadPostImage(
+    @User('id') currentUserId: number,
+    @Param('slug') slug: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    const filePath = `uploads/posts/${file.filename}`;
+
+    // вызываем сервис, чтобы обновить поле img у поста
+    const updatedPost = await this.postService.setPostImage(
+      slug,
+      currentUserId,
+      filePath,
+    );
+
+    // Возвращаем обновлённый пост
+    return this.postService.bildPostResponse(updatedPost);
   }
 }
 
@@ -1288,6 +1337,25 @@ export class PostService {
     }
     return post;
   }
+
+  async setPostImage(
+    slug: string,
+    userId: number,
+    filePath: string,
+  ): Promise<PostEntity> {
+    const post = await this.findBySlug(slug);
+    if (!post) {
+      throw new HttpException('Post not found', HttpStatus.NOT_FOUND);
+    }
+    if (post.author.id !== userId) {
+      throw new HttpException(
+        'Not authorized to update this post',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    post.img = filePath;
+    return await this.postRepository.save(post);
+  }
 }
 
 ```
@@ -1556,6 +1624,304 @@ export type ProfileType = UserType & { following: boolean };
 
 ```
 
+## src\seed.ts
+
+```typescript
+// src/seed.ts
+import 'reflect-metadata';
+import { DataSource, DataSourceOptions } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
+import { config } from 'dotenv'; // при необходимости, если нужно чтение .env
+import slugify from 'slugify';
+
+// Импортируем сущности (лежат в папках src/user, src/post, src/comment, src/profile)
+import { UserEntity } from './user/user.entity';
+import { PostEntity } from './post/post.entity';
+import { CommentEntity } from './comment/comment.entity';
+import { FollowEntity } from './profile/follow.entity';
+
+// ---------- ДАННЫЕ ДЛЯ СИДИРОВАНИЯ (РИЕЛТОРЫ, ТИПЫ НЕДВИЖИМОСТИ И Т.Д.) ----------
+
+const usersData = [
+  {
+    username: 'andriy.kovalenko',
+    email: 'andriy.kovalenko@realtor.ua',
+    bio: 'Профессиональный риелтор с 10-летним опытом, работающий в Киеве.',
+  },
+  {
+    username: 'olga.shevchenko',
+    email: 'olga.shevchenko@realtor.ua',
+    bio: 'Опытный риелтор, специализирующийся на продаже элитной недвижимости во Львове.',
+  },
+  {
+    username: 'mykola.petrenko',
+    email: 'mykola.petrenko@realtor.ua',
+    bio: 'Риелтор с глубоким знанием рынка жилой и коммерческой недвижимости в Одессе.',
+  },
+  {
+    username: 'svitlana.ivanova',
+    email: 'svitlana.ivanova@realtor.ua',
+    bio: 'Профессиональный риелтор, консультирующий по вопросам инвестиций в недвижимость в Харькове.',
+  },
+  {
+    username: 'taras.melnyk',
+    email: 'taras.melnyk@realtor.ua',
+    bio: 'Специалист по продаже квартир и домов, работает в Днепре.',
+  },
+  {
+    username: 'yulia.tkachenko',
+    email: 'yulia.tkachenko@realtor.ua',
+    bio: 'Риелтор с отличным чувством стиля, помогаю найти идеальное жильё во Львове.',
+  },
+  {
+    username: 'dmytro.hryhorenko',
+    email: 'dmytro.hryhorenko@realtor.ua',
+    bio: 'Эксперт по коммерческой недвижимости и инвестиционным проектам в Киеве.',
+  },
+  {
+    username: 'natalia.bondarenko',
+    email: 'natalia.bondarenko@realtor.ua',
+    bio: 'Риелтор с фокусом на элитное жильё и земельные участки в Одессе.',
+  },
+  {
+    username: 'olexandr.koval',
+    email: 'olexandr.koval@realtor.ua',
+    bio: 'Профессиональный консультант по недвижимости с многолетним опытом в Харькове.',
+  },
+  {
+    username: 'inna.kuzmenko',
+    email: 'inna.kuzmenko@realtor.ua',
+    bio: 'Специалист по жилой недвижимости, помогаю клиентам найти уютное жильё в Черновцах.',
+  },
+];
+
+const propertyTypes = [
+  'Квартира',
+  'Дом',
+  'Офис',
+  'Коммерческая недвижимость',
+  'Земельный участок',
+];
+
+const listingCities = [
+  'Киев',
+  'Львов',
+  'Одесса',
+  'Харьков',
+  'Днепр',
+  'Запорожье',
+  'Винница',
+  'Ивано-Франковск',
+  'Черновцы',
+  'Полтава',
+];
+
+const commentTemplates = [
+  'Отличное предложение, очень заинтересован!',
+  'Хороший объект, хочу узнать детали.',
+  'Можно договориться о просмотре?',
+  'Интересное предложение, уточните, пожалуйста, условия сделки.',
+  'Объект выглядит привлекательно, жду дополнительной информации.',
+  'Спасибо за подробное описание – очень интересно!',
+  'Замечательное предложение, рекомендую к просмотру.',
+  'Объект вызывает интерес, хочется посмотреть!',
+  'Очень качественное предложение, рассмотрю условия.',
+  'Прекрасное соотношение цены и качества.',
+  'Интересно, когда можно осмотреть объект?',
+  'Объект выглядит перспективно, буду рад обсудить условия.',
+  'Подробности, пожалуйста, хотелось бы узнать больше.',
+  'Отличное предложение, жду звонка.',
+  'Рекомендую для тех, кто ищет недвижимость в этом районе.',
+  'Хочу получить дополнительную информацию, пожалуйста.',
+  'Объект в хорошем состоянии, спасибо за объявление.',
+  'Очень понравилось описание, интересно!',
+  'Жду возможности обсудить этот объект подробнее.',
+  'Объект соответствует моим требованиям, свяжитесь со мной.',
+  'Ваше предложение выглядит заманчиво, прошу связаться.',
+  'Информация представлена ясно и понятно, спасибо!',
+  'Буду рад обсудить детали при личной встрече.',
+  'Объект интересен, хотелось бы узнать о дополнительных условиях.',
+  'Спасибо за объявление, готов к просмотру в удобное время.',
+];
+
+// ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СЛУЧАЙНОСТИ ----------
+
+function randomElement<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function randomInt(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// ---------- ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ПРАВИЛЬНЫХ НАСТРОЕК DataSourceOptions ----------
+
+function dataSourceOptionsFactory(
+  configService: ConfigService,
+): DataSourceOptions {
+  return {
+    // Обязательно укажите правильный type
+    type: 'postgres',
+    host: configService.get<string>('DB_HOST', 'localhost'),
+    port: +configService.get<string>('DB_PORT', '5432'),
+    username: configService.get<string>(
+      'DB_USERNAME',
+      'panchenkowork_postgres',
+    ),
+    password: configService.get<string>('DB_PASSWORD', '36355693801'),
+    database: configService.get<string>('DB_NAME', 'panchenkowork_db'),
+    // Путь к сущностям
+    entities: [__dirname + '/**/*.entity.{ts,js}'],
+    // На dev-среде можно оставить true
+    synchronize: true,
+  };
+}
+
+// ---------- ГЛАВНАЯ ФУНКЦИЯ SEED ----------
+
+async function seed() {
+  try {
+    // Загружаем .env при необходимости
+    config();
+
+    // Создаём ConfigService, чтобы брать переменные окружения
+    const configService = new ConfigService();
+
+    // Формируем DataSourceOptions (для "typeorm": ^0.3.x)
+    const dataSourceOptions = dataSourceOptionsFactory(configService);
+
+    // Создаём DataSource и инициализируем
+    const dataSource = new DataSource(dataSourceOptions);
+    await dataSource.initialize();
+
+    // Получаем репозитории
+    const userRepository = dataSource.getRepository(UserEntity);
+    const postRepository = dataSource.getRepository(PostEntity);
+    const commentRepository = dataSource.getRepository(CommentEntity);
+    const followRepository = dataSource.getRepository(FollowEntity);
+
+    // ---------- 1. Создаём 10 риелторов ----------
+    const users: UserEntity[] = [];
+    for (let i = 0; i < usersData.length; i++) {
+      const data = usersData[i];
+      const user = new UserEntity();
+      user.username = data.username;
+      user.email = data.email;
+      user.bio = data.bio;
+      // Аватар в формате "номер.jpg"
+      user.img = `uploads/avatars/${i + 1}.jpg`;
+      // Пароль будет захеширован благодаря @BeforeInsert
+      user.password = 'password123';
+      const savedUser = await userRepository.save(user);
+      // Инициализируем favorites (лайки)
+      (savedUser as any).favorites = [];
+      users.push(savedUser);
+    }
+    console.log(
+      'Созданы риелторы:',
+      users.map((u) => u.username),
+    );
+
+    // ---------- 2. Создаём 10 объектов на каждого риелтора ----------
+    const posts: PostEntity[] = [];
+    let globalPostCounter = 1;
+    for (const user of users) {
+      for (let i = 1; i <= 10; i++) {
+        const post = new PostEntity();
+        const propertyType = randomElement(propertyTypes);
+        const city = randomElement(listingCities);
+
+        post.title = `Продажа ${propertyType} в ${city} – Объект №${i} от ${user.username}`;
+        const area = randomInt(30, 150);
+        const price = randomInt(50000, 300000);
+        post.content = `Предлагается ${propertyType.toLowerCase()} площадью ${area} кв.м в ${city}. Цена: ${price} USD. Обращайтесь к ${user.username}.`;
+
+        // Картинка в формате "номер.jpg"
+        post.img = `uploads/posts/${globalPostCounter}.jpg`;
+        globalPostCounter++;
+
+        post.tagList = [
+          propertyType.toLowerCase(),
+          'недвижимость',
+          city.toLowerCase(),
+        ];
+        post.favoritesCount = 0;
+        post.author = user;
+        post.slug = 'temp-slug'; // временно
+
+        let savedPost = await postRepository.save(post);
+        // Генерируем slug на основе title + id
+        savedPost.slug = `${slugify(savedPost.title, { lower: true })}-${savedPost.id}`;
+        savedPost = await postRepository.save(savedPost);
+        posts.push(savedPost);
+      }
+    }
+    console.log(`Созданы объекты недвижимости, всего: ${posts.length}`);
+
+    // ---------- 3. Проставляем лайки (3–7 лайков на пост) ----------
+    for (const post of posts) {
+      const potentialLikers = users.filter((u) => u.id !== post.author.id);
+      const numLikes = randomInt(3, Math.min(7, potentialLikers.length));
+      const shuffled = potentialLikers.sort(() => 0.5 - Math.random());
+      const selectedLikers = shuffled.slice(0, numLikes);
+
+      for (const liker of selectedLikers) {
+        (liker as any).favorites.push(post);
+        await userRepository.save(liker);
+      }
+
+      post.favoritesCount = selectedLikers.length;
+      await postRepository.save(post);
+    }
+    console.log('Лайки проставлены');
+
+    // ---------- 4. Добавляем комментарии (3–5 на пост, итого > 100) ----------
+    for (const post of posts) {
+      const numComments = randomInt(3, 5);
+      for (let j = 1; j <= numComments; j++) {
+        const comment = new CommentEntity();
+        const template = randomElement(commentTemplates);
+        comment.body = `${template} [Комментарий №${j} к "${post.title}"]`;
+        // Выбираем автора комментария (не автор поста)
+        const potentialCommenters = users.filter(
+          (u) => u.id !== post.author.id,
+        );
+        comment.author = randomElement(potentialCommenters);
+        comment.post = post;
+        await commentRepository.save(comment);
+      }
+    }
+    console.log('Комментарии добавлены');
+
+    // ---------- 5. Подписки (2–4 на пользователя) ----------
+    for (const user of users) {
+      const potentialFollows = users.filter((u) => u.id !== user.id);
+      const numFollows = randomInt(2, 4);
+      const shuffled = potentialFollows.sort(() => 0.5 - Math.random());
+      const followsToCreate = shuffled.slice(0, numFollows);
+
+      for (const target of followsToCreate) {
+        const follow = new FollowEntity();
+        follow.followerId = user.id;
+        follow.followingId = target.id;
+        await followRepository.save(follow);
+      }
+    }
+    console.log('Подписки созданы');
+
+    console.log('Скрипт заполнения базы тестовыми данными выполнен успешно!');
+    process.exit(0);
+  } catch (error) {
+    console.error('Ошибка при заполнении базы данных:', error);
+    process.exit(1);
+  }
+}
+
+// Запуск сидирования
+seed();
+
+```
+
 ## src\types\express-request.interface.ts
 
 ```typescript
@@ -1761,6 +2127,7 @@ import { IUserResponse } from './types/user-response.interface';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UserService } from './user.service';
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -1769,12 +2136,17 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import { UserEntity } from './user.entity';
 import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
 
 @ApiTags('Users')
 @Controller()
@@ -1828,6 +2200,39 @@ export class UserController {
     const results = await this.userService.searchByUsername(username);
     return { users: results };
   }
+
+  @Post('user/avatar')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(FileInterceptor('image', {
+    storage: diskStorage({
+      destination: './uploads/avatars',
+      filename: (req, file, callback) => {
+        // Генерируем уникальное имя файла: userID + timestamp + расширение
+        const ext = extname(file.originalname); // например .png
+        const fileName = `avatar_${Date.now()}${ext}`;
+        callback(null, fileName);
+      },
+    }),
+    limits: { fileSize: 2 * 1024 * 1024 }, // ограничение ~2MB
+  }))
+  async uploadAvatar(
+    @User() currentUser: UserEntity,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    // Пример: путь к файлу
+    const filePath = `uploads/avatars/${file.filename}`;
+
+    // Сохраняем ссылку на аватар в поле user.img
+    const updatedUser = await this.userService.setUserAvatar(currentUser.id, filePath);
+
+    // Возвращаем обновлённые данные пользователя
+    return this.userService.buildUserResponse(updatedUser);
+  }
+
 }
 
 ```
@@ -2022,14 +2427,21 @@ export class UserService {
     return await this.userRepository.save(user);
   }
 
-  // src/user/user.service.ts
-  // ...
   async searchByUsername(username: string): Promise<UserEntity[]> {
     if (!username) return [];
     return this.userRepository.find({
       where: { username: ILike(`%${username}%`) }, // ILike - если нужен case-insensitive поиск
       take: 20,
     });
+  }
+
+  async setUserAvatar(userId: number, avatarPath: string): Promise<UserEntity> {
+    const user = await this.findById(userId);
+    if (!user) {
+      throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+    }
+    user.img = avatarPath;
+    return await this.userRepository.save(user);
   }
 }
 

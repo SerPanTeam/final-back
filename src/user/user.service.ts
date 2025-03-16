@@ -109,13 +109,20 @@ export class UserService {
     return await this.userRepository.save(user);
   }
 
-  // src/user/user.service.ts
-  // ...
   async searchByUsername(username: string): Promise<UserEntity[]> {
     if (!username) return [];
     return this.userRepository.find({
       where: { username: ILike(`%${username}%`) }, // ILike - если нужен case-insensitive поиск
       take: 20,
     });
+  }
+
+  async setUserAvatar(userId: number, avatarPath: string): Promise<UserEntity> {
+    const user = await this.findById(userId);
+    if (!user) {
+      throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+    }
+    user.img = avatarPath;
+    return await this.userRepository.save(user);
   }
 }
