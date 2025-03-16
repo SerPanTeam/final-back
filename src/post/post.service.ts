@@ -195,4 +195,23 @@ export class PostService {
     }
     return post;
   }
+
+  async setPostImage(
+    slug: string,
+    userId: number,
+    filePath: string,
+  ): Promise<PostEntity> {
+    const post = await this.findBySlug(slug);
+    if (!post) {
+      throw new HttpException('Post not found', HttpStatus.NOT_FOUND);
+    }
+    if (post.author.id !== userId) {
+      throw new HttpException(
+        'Not authorized to update this post',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    post.img = filePath;
+    return await this.postRepository.save(post);
+  }
 }

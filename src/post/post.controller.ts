@@ -1,6 +1,7 @@
 import { AuthGuard } from 'src/user/guards/auth.guard';
 import { PostService } from './post.service';
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -9,7 +10,9 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
@@ -18,6 +21,9 @@ import { UserEntity } from 'src/user/user.entity';
 import { CreatePostDto } from './dto/create-post.dto';
 import { IPostResponse } from './types/post-response.interface';
 import { IPostsResponse } from './types/posts-response.interface';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
 
 @Controller('posts')
 export class PostController {
@@ -110,5 +116,42 @@ export class PostController {
     );
     if (post) return this.postService.bildPostResponse(post);
     else return null as any;
+  }
+
+  @Post(':slug/uploadImage')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: diskStorage({
+        destination: './uploads/posts',
+        filename: (req, file, callback) => {
+          const ext = extname(file.originalname);
+          const fileName = `post_${Date.now()}${ext}`;
+          callback(null, fileName);
+        },
+      }),
+      limits: { fileSize: 5 * 1024 * 1024 }, // ограничение ~5MB
+    }),
+  )
+  async uploadPostImage(
+    @User('id') currentUserId: number,
+    @Param('slug') slug: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    const filePath = `uploads/posts/${file.filename}`;
+
+    // вызываем сервис, чтобы обновить поле img у поста
+    const updatedPost = await this.postService.setPostImage(
+      slug,
+      currentUserId,
+      filePath,
+    );
+
+    // Возвращаем обновлённый пост
+    return this.postService.bildPostResponse(updatedPost);
   }
 }
