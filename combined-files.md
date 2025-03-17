@@ -3,8 +3,10 @@
 ```plaintext
 ├── src
 │   ├── chat
+│   │   ├── chat.controller.ts
 │   │   ├── chat.gateway.ts
 │   │   ├── chat.module.ts
+│   │   ├── chat.service.ts
 │   │   └── message.entity.ts
 │   ├── comment
 │   │   ├── dto
@@ -289,7 +291,65 @@ import { Injectable } from '@nestjs/common';
 @Injectable()
 export class AppService {
   getHello(): string {
-    return 'Hello World!';
+    return 'Hello World! - test!';
+  }
+}
+
+```
+
+## src\chat\chat.controller.ts
+
+```typescript
+import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { ChatService } from './chat.service';
+import { AuthGuard } from 'src/user/guards/auth.guard';
+import { MessageEntity } from './message.entity';
+import { User } from 'src/user/decorators/user.decorator';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+
+@ApiTags('Chat')
+@Controller('chat')
+export class ChatController {
+  constructor(private readonly chatService: ChatService) {}
+
+  @Get('rooms/:roomId/messages')
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Получить все сообщения из конкретной комнаты' })
+  @ApiResponse({
+    status: 200,
+    description: 'Сообщения успешно получены',
+    type: [MessageEntity],
+  })
+  async getMessagesByRoom(
+    @Param('roomId') roomId: string,
+  ): Promise<MessageEntity[]> {
+    return this.chatService.getMessagesByRoom(roomId);
+  }
+
+  @Get('messages')
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Получить все сообщения (без фильтра по roomId)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Все сообщения успешно получены',
+    type: [MessageEntity],
+  })
+  async getAllMessages(): Promise<MessageEntity[]> {
+    return this.chatService.getAllMessages();
+  }
+
+  /**
+   * Новый endpoint для получения списка последних переписок.
+   */
+  @Get('conversations')
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Получить список последних переписок' })
+  @ApiResponse({
+    status: 200,
+    description: 'Список переписок успешно получен',
+  })
+  async getLastConversations(@User('id') userId: number): Promise<any[]> {
+    return this.chatService.getLastConversations(userId);
   }
 }
 
@@ -313,7 +373,7 @@ import { UserEntity } from 'src/user/user.entity';
 
 @WebSocketGateway({
   cors: {
-    origin: '*', // при необходимости указать конкретные адреса
+    origin: '*', // при необходимости укажите конкретные адреса (например, http://localhost:3000)
   },
 })
 export class ChatGateway {
@@ -323,20 +383,36 @@ export class ChatGateway {
   constructor(
     @InjectRepository(MessageEntity)
     private readonly messageRepository: Repository<MessageEntity>,
+
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
   ) {}
 
-  // Пользователь (клиент) вызывает событие 'joinRoom' и передаёт ID комнаты, чтобы "зайти" в неё
+  /**
+   * Клиент вызывает событие 'joinRoom', передавая { roomId },
+   * чтобы «зайти» в комнату.
+   */
   @SubscribeMessage('joinRoom')
   handleJoinRoom(
     @MessageBody() data: { roomId: string },
     @ConnectedSocket() client: Socket,
   ) {
     const { roomId } = data;
+    // «Подписываем» сокет на комнату roomId
     client.join(roomId);
+
+    // (опционально) отправляем уведомление о том, что клиент успешно вошёл в комнату
     client.emit('joinedRoom', { roomId });
   }
 
-  // Отправка сообщения: клиент вызывает 'sendMessage' и передаёт roomId, senderId, recipientId, content
+  /**
+   * Клиент вызывает событие 'sendMessage', передавая в data:
+   *  - roomId: string
+   *  - senderId: number
+   *  - recipientId: number
+   *  - content: string
+   *  - clientMessageId?: string (опционально, если хотим избежать дубликатов на фронте)
+   */
   @SubscribeMessage('sendMessage')
   async handleSendMessage(
     @MessageBody()
@@ -345,39 +421,83 @@ export class ChatGateway {
       senderId: number;
       recipientId: number;
       content: string;
+      clientMessageId?: string;
     },
     @ConnectedSocket() client: Socket,
   ) {
-    // 1. Сохраняем сообщение в БД (если нужно)
-    const message = new MessageEntity();
-    message.content = data.content;
-    // Здесь вам надо найти UserEntity по ID
-    // Но для упрощения примера пропустим детализацию. Если очень нужно:
-    // const sender = await this.userRepository.findOne({ where: { id: data.senderId } });
-    // const recipient = await this.userRepository.findOne({ where: { id: data.recipientId } });
-    // message.sender = sender;
-    // message.recipient = recipient;
+    try {
+      // 1. Находим пользователей в базе данных
+      const sender = await this.userRepository.findOne({
+        where: { id: data.senderId },
+      });
+      const recipient = await this.userRepository.findOne({
+        where: { id: data.recipientId },
+      });
 
-    // Если у вас нет userRepository, можно сохранить чисто ID, но тогда нужна дополнительная логика
-    // Или сделаем так (будет ошибка, если юзера не найдёт):
-    const sender = new UserEntity();
-    sender.id = data.senderId;
-    message.sender = sender;
+      // Если кого-то из пользователей нет — ошибка
+      if (!sender || !recipient) {
+        client.emit('messageError', {
+          error: 'Sender or recipient not found',
+          senderId: data.senderId,
+          recipientId: data.recipientId,
+          clientMessageId: data.clientMessageId, // отправляем обратно clientMessageId, чтобы фронт знал, какое сообщение не доставлено
+        });
+        return;
+      }
 
-    const recipient = new UserEntity();
-    recipient.id = data.recipientId;
-    message.recipient = recipient;
+      // 2. Создаём и сохраняем сообщение
+      const message = new MessageEntity();
+      message.roomId = data.roomId;
+      message.content = data.content;
+      message.sender = sender;
+      message.recipient = recipient;
 
-    await this.messageRepository.save(message);
+      const savedMessage = await this.messageRepository.save(message);
 
-    // 2. Отправляем (broadcast) это сообщение в комнату roomId
-    this.server.to(data.roomId).emit('receiveMessage', {
-      id: message.id,
-      content: message.content,
-      senderId: data.senderId,
-      recipientId: data.recipientId,
-      createdAt: message.createdAt,
-    });
+      // 3. Отправляем обратно событие receiveMessage всем подписанным на roomId
+      this.server.to(data.roomId).emit('receiveMessage', {
+        id: savedMessage.id,
+        content: savedMessage.content,
+        senderId: sender.id,
+        recipientId: recipient.id,
+        roomId: data.roomId,
+        createdAt: savedMessage.createdAt,
+        clientMessageId: data.clientMessageId, // возвращаем clientMessageId, чтобы фронт мог сопоставить
+      });
+    } catch (error) {
+      console.error('Error saving message:', error);
+      client.emit('messageError', {
+        error: 'Failed to save message',
+        clientMessageId: data.clientMessageId,
+      });
+    }
+  }
+
+  /**
+   * (Опционально) История сообщений:
+   * Клиент вызывает событие 'getMessageHistory', передавая { roomId },
+   * чтобы запросить все сообщения в данной комнате.
+   */
+  @SubscribeMessage('getMessageHistory')
+  async handleGetMessageHistory(
+    @MessageBody() data: { roomId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    try {
+      const messages = await this.messageRepository.find({
+        where: { roomId: data.roomId },
+        order: { createdAt: 'ASC' },
+      });
+
+      // Отправляем историю сообщений конкретно тому клиенту, который запросил
+      client.emit('messageHistory', {
+        roomId: data.roomId,
+        messages,
+      });
+    } catch (error) {
+      console.error('Error fetching message history:', error);
+      client.emit('messageError', { error: 'Failed to fetch message history' });
+    }
   }
 }
 
@@ -387,15 +507,101 @@ export class ChatGateway {
 
 ```typescript
 import { Module } from '@nestjs/common';
-import { ChatGateway } from './chat.gateway';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MessageEntity } from './message.entity';
+import { UserEntity } from 'src/user/user.entity';
+import { ChatGateway } from './chat.gateway';
+import { ChatService } from './chat.service';
+import { ChatController } from './chat.controller';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([MessageEntity])],
-  providers: [ChatGateway],
+  imports: [TypeOrmModule.forFeature([MessageEntity, UserEntity])],
+  providers: [ChatGateway, ChatService],
+  controllers: [ChatController],
+  exports: [ChatService], // если нужно использовать ChatService в других модулях
 })
 export class ChatModule {}
+
+```
+
+## src\chat\chat.service.ts
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { MessageEntity } from './message.entity';
+
+@Injectable()
+export class ChatService {
+  constructor(
+    @InjectRepository(MessageEntity)
+    private readonly messageRepository: Repository<MessageEntity>,
+  ) {}
+
+  async getMessagesByRoom(roomId: string): Promise<MessageEntity[]> {
+    return this.messageRepository.find({
+      where: { roomId },
+      order: { createdAt: 'ASC' },
+    });
+  }
+
+  async getAllMessages(): Promise<MessageEntity[]> {
+    return this.messageRepository.find({
+      order: { createdAt: 'ASC' },
+    });
+  }
+
+  /**
+   * Метод возвращает список последних переписок для текущего пользователя.
+   * Для каждого уникального roomId выбирается последнее (самое новое) сообщение,
+   * после чего определяется собеседник: если текущий пользователь является отправителем,
+   * то собеседником является получатель, иначе — отправитель.
+   */
+  async getLastConversations(userId: number): Promise<any[]> {
+    // Используем QueryBuilder для выборки сообщений с нужными связями и сортировкой
+    const messages = await this.messageRepository
+      .createQueryBuilder('message')
+      .leftJoinAndSelect('message.sender', 'sender')
+      .leftJoinAndSelect('message.recipient', 'recipient')
+      .where('sender.id = :userId OR recipient.id = :userId', { userId })
+      .orderBy('message.createdAt', 'DESC')
+      .getMany();
+
+    // Группируем сообщения по roomId – первое (самое новое) сообщение в каждой группе
+    const conversationsMap: { [roomId: string]: MessageEntity } = {};
+    messages.forEach((msg) => {
+      if (!conversationsMap[msg.roomId]) {
+        conversationsMap[msg.roomId] = msg;
+      }
+    });
+
+    // Преобразуем объект группировки в массив и сортируем по дате последнего сообщения
+    const conversations = Object.values(conversationsMap).sort((a, b) => {
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    // Формируем DTO для фронтенда
+    const conversationDtos = conversations.map((msg) => {
+      const otherUser = msg.sender.id === userId ? msg.recipient : msg.sender;
+      return {
+        roomId: msg.roomId,
+        lastMessage: {
+          id: msg.id,
+          content: msg.content,
+          createdAt: msg.createdAt,
+        },
+        otherUser: {
+          id: otherUser.id,
+          username: otherUser.username,
+          img: otherUser.img,
+        },
+      };
+    });
+
+    return conversationDtos;
+  }
+}
 
 ```
 
@@ -410,23 +616,38 @@ import {
   CreateDateColumn,
 } from 'typeorm';
 import { UserEntity } from 'src/user/user.entity';
+import { ApiProperty } from '@nestjs/swagger';
 
 @Entity({ name: 'messages' })
 export class MessageEntity {
+  @ApiProperty({
+    example: 1,
+    description: 'Уникальный идентификатор сообщения',
+  })
   @PrimaryGeneratedColumn()
   id: number;
 
+  @ApiProperty({ example: 'Привет!', description: 'Текст сообщения' })
   @Column()
   content: string;
 
-  // Отправитель
+  @ApiProperty({ example: 'room123', description: 'ID комнаты (roomId)' })
+  @Column({ nullable: true })
+  roomId: string;
+
+  @ApiProperty({
+    description: 'Пользователь-отправитель сообщения (объект UserEntity)',
+  })
   @ManyToOne(() => UserEntity, { eager: true })
   sender: UserEntity;
 
-  // Получатель
+  @ApiProperty({
+    description: 'Пользователь-получатель сообщения (объект UserEntity)',
+  })
   @ManyToOne(() => UserEntity, { eager: true })
   recipient: UserEntity;
 
+  @ApiProperty({ description: 'Время создания сообщения (таймстамп)' })
   @CreateDateColumn()
   createdAt: Date;
 }
