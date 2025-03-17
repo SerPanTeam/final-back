@@ -13,7 +13,7 @@ import { UserEntity } from 'src/user/user.entity';
 
 @WebSocketGateway({
   cors: {
-    origin: '*', // при необходимости указать конкретные адреса
+    origin: '*', // при необходимости укажите конкретные адреса (например, http://localhost:3000)
   },
 })
 export class ChatGateway {
@@ -23,20 +23,36 @@ export class ChatGateway {
   constructor(
     @InjectRepository(MessageEntity)
     private readonly messageRepository: Repository<MessageEntity>,
+
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
   ) {}
 
-  // Пользователь (клиент) вызывает событие 'joinRoom' и передаёт ID комнаты, чтобы "зайти" в неё
+  /**
+   * Клиент вызывает событие 'joinRoom', передавая { roomId },
+   * чтобы «зайти» в комнату.
+   */
   @SubscribeMessage('joinRoom')
   handleJoinRoom(
     @MessageBody() data: { roomId: string },
     @ConnectedSocket() client: Socket,
   ) {
     const { roomId } = data;
+    // «Подписываем» сокет на комнату roomId
     client.join(roomId);
+
+    // (опционально) отправляем уведомление о том, что клиент успешно вошёл в комнату
     client.emit('joinedRoom', { roomId });
   }
 
-  // Отправка сообщения: клиент вызывает 'sendMessage' и передаёт roomId, senderId, recipientId, content
+  /**
+   * Клиент вызывает событие 'sendMessage', передавая в data:
+   *  - roomId: string
+   *  - senderId: number
+   *  - recipientId: number
+   *  - content: string
+   *  - clientMessageId?: string (опционально, если хотим избежать дубликатов на фронте)
+   */
   @SubscribeMessage('sendMessage')
   async handleSendMessage(
     @MessageBody()
@@ -45,38 +61,82 @@ export class ChatGateway {
       senderId: number;
       recipientId: number;
       content: string;
+      clientMessageId?: string;
     },
     @ConnectedSocket() client: Socket,
   ) {
-    // 1. Сохраняем сообщение в БД (если нужно)
-    const message = new MessageEntity();
-    message.content = data.content;
-    // Здесь вам надо найти UserEntity по ID
-    // Но для упрощения примера пропустим детализацию. Если очень нужно:
-    // const sender = await this.userRepository.findOne({ where: { id: data.senderId } });
-    // const recipient = await this.userRepository.findOne({ where: { id: data.recipientId } });
-    // message.sender = sender;
-    // message.recipient = recipient;
+    try {
+      // 1. Находим пользователей в базе данных
+      const sender = await this.userRepository.findOne({
+        where: { id: data.senderId },
+      });
+      const recipient = await this.userRepository.findOne({
+        where: { id: data.recipientId },
+      });
 
-    // Если у вас нет userRepository, можно сохранить чисто ID, но тогда нужна дополнительная логика
-    // Или сделаем так (будет ошибка, если юзера не найдёт):
-    const sender = new UserEntity();
-    sender.id = data.senderId;
-    message.sender = sender;
+      // Если кого-то из пользователей нет — ошибка
+      if (!sender || !recipient) {
+        client.emit('messageError', {
+          error: 'Sender or recipient not found',
+          senderId: data.senderId,
+          recipientId: data.recipientId,
+          clientMessageId: data.clientMessageId, // отправляем обратно clientMessageId, чтобы фронт знал, какое сообщение не доставлено
+        });
+        return;
+      }
 
-    const recipient = new UserEntity();
-    recipient.id = data.recipientId;
-    message.recipient = recipient;
+      // 2. Создаём и сохраняем сообщение
+      const message = new MessageEntity();
+      message.roomId = data.roomId;
+      message.content = data.content;
+      message.sender = sender;
+      message.recipient = recipient;
 
-    await this.messageRepository.save(message);
+      const savedMessage = await this.messageRepository.save(message);
 
-    // 2. Отправляем (broadcast) это сообщение в комнату roomId
-    this.server.to(data.roomId).emit('receiveMessage', {
-      id: message.id,
-      content: message.content,
-      senderId: data.senderId,
-      recipientId: data.recipientId,
-      createdAt: message.createdAt,
-    });
+      // 3. Отправляем обратно событие receiveMessage всем подписанным на roomId
+      this.server.to(data.roomId).emit('receiveMessage', {
+        id: savedMessage.id,
+        content: savedMessage.content,
+        senderId: sender.id,
+        recipientId: recipient.id,
+        roomId: data.roomId,
+        createdAt: savedMessage.createdAt,
+        clientMessageId: data.clientMessageId, // возвращаем clientMessageId, чтобы фронт мог сопоставить
+      });
+    } catch (error) {
+      console.error('Error saving message:', error);
+      client.emit('messageError', {
+        error: 'Failed to save message',
+        clientMessageId: data.clientMessageId,
+      });
+    }
+  }
+
+  /**
+   * (Опционально) История сообщений:
+   * Клиент вызывает событие 'getMessageHistory', передавая { roomId },
+   * чтобы запросить все сообщения в данной комнате.
+   */
+  @SubscribeMessage('getMessageHistory')
+  async handleGetMessageHistory(
+    @MessageBody() data: { roomId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    try {
+      const messages = await this.messageRepository.find({
+        where: { roomId: data.roomId },
+        order: { createdAt: 'ASC' },
+      });
+
+      // Отправляем историю сообщений конкретно тому клиенту, который запросил
+      client.emit('messageHistory', {
+        roomId: data.roomId,
+        messages,
+      });
+    } catch (error) {
+      console.error('Error fetching message history:', error);
+      client.emit('messageError', { error: 'Failed to fetch message history' });
+    }
   }
 }
