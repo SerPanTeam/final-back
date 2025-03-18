@@ -1,9 +1,9 @@
 import {
   Controller,
-  Delete,
   Get,
   Param,
   Post,
+  Delete,
   UseGuards,
 } from '@nestjs/common';
 import { User } from 'src/user/decorators/user.decorator';
@@ -16,40 +16,44 @@ import { UserEntity } from 'src/user/user.entity';
 export class ProflileController {
   constructor(private readonly profileService: ProfileService) {}
 
+  // GET /profiles/:username - возвращает профиль с количеством подписчиков и подписок
   @Get(':username')
+  @UseGuards(AuthGuard)
   async getProfile(
     @User('id') currentUserId: number,
-    @Param('username') userName: string,
+    @Param('username') username: string,
   ): Promise<IProfileResponse> {
     const profile = await this.profileService.getProfile(
       currentUserId,
-      userName,
+      username,
     );
     return this.profileService.buildProfileResponse(profile);
   }
 
+  // POST /profiles/:username/follow - подписка на пользователя
   @Post(':username/follow')
   @UseGuards(AuthGuard)
   async followProfile(
     @User('id') currentUserId: number,
-    @Param('username') userName: string,
+    @Param('username') username: string,
   ): Promise<IProfileResponse> {
     const profile = await this.profileService.followProfile(
       currentUserId,
-      userName,
+      username,
     );
     return this.profileService.buildProfileResponse(profile);
   }
 
+  // DELETE /profiles/:username/follow - отписка от пользователя
   @Delete(':username/follow')
   @UseGuards(AuthGuard)
   async unFollowProfile(
     @User() currentUser: UserEntity,
-    @Param('username') userName: string,
+    @Param('username') username: string,
   ): Promise<IProfileResponse> {
     const profile = await this.profileService.unFollowProfile(
       currentUser,
-      userName,
+      username,
     );
     return this.profileService.buildProfileResponse(profile);
   }

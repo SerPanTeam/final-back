@@ -30,7 +30,18 @@ export class ProfileService {
     const follow = await this.followRepository.findOne({
       where: { followerId: currentUserId, followingId: user.id },
     });
-    return { ...user, following: Boolean(follow) };
+    const followersCount = await this.followRepository.count({
+      where: { followingId: user.id },
+    });
+    const followingCount = await this.followRepository.count({
+      where: { followerId: user.id },
+    });
+    return {
+      ...user,
+      following: Boolean(follow),
+      followersCount,
+      followingCount,
+    };
   }
 
   async followProfile(
@@ -43,25 +54,28 @@ export class ProfileService {
     if (!user) {
       throw new HttpException('Profile does not exist', HttpStatus.NOT_FOUND);
     }
-
     if (currentUserId === user.id) {
       throw new HttpException(
         'Follower and following cant be equal',
         HttpStatus.BAD_REQUEST,
       );
     }
-
     const follow = await this.followRepository.findOne({
       where: { followerId: currentUserId, followingId: user.id },
     });
-
     if (!follow) {
       const followToCreate = new FollowEntity();
       followToCreate.followerId = currentUserId;
       followToCreate.followingId = user.id;
       await this.followRepository.save(followToCreate);
     }
-    return { ...user, following: true };
+    const followersCount = await this.followRepository.count({
+      where: { followingId: user.id },
+    });
+    const followingCount = await this.followRepository.count({
+      where: { followerId: user.id },
+    });
+    return { ...user, following: true, followersCount, followingCount };
   }
 
   async unFollowProfile(
@@ -74,28 +88,24 @@ export class ProfileService {
     if (!user) {
       throw new HttpException('Profile does not exist', HttpStatus.NOT_FOUND);
     }
-
     if (currentUser.id === user.id) {
       throw new HttpException(
         'Follower and following cant be equal',
         HttpStatus.BAD_REQUEST,
       );
     }
-
-    // Если user.id != currentUserId, то уведомить user
-    await this.notificationService.createNotification(
-      user,
-      currentUser,
-      'follow',
-      `Пользователь @${user.username} подписался на вас`,
-    );
-
+    // Отписываемся (в данном случае уведомление об отписке можно не отправлять)
     await this.followRepository.delete({
       followerId: currentUser.id,
       followingId: user.id,
     });
-
-    return { ...user, following: false };
+    const followersCount = await this.followRepository.count({
+      where: { followingId: user.id },
+    });
+    const followingCount = await this.followRepository.count({
+      where: { followerId: user.id },
+    });
+    return { ...user, following: false, followersCount, followingCount };
   }
 
   buildProfileResponse(profile: ProfileType): IProfileResponse {

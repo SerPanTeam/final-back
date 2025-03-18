@@ -215,4 +215,17 @@ export class PostService {
     post.img = filePath;
     return await this.postRepository.save(post);
   }
+
+  async getPostStats(
+    slug: string,
+  ): Promise<{ likes: number; comments: number }> {
+    const post = await this.findBySlug(slug);
+    if (!post) {
+      throw new HttpException('Post not found', HttpStatus.NOT_FOUND);
+    }
+    const likes = post.favoritesCount;
+    // Если комментарии загружаются eagerly – просто возвращаем длину массива
+    const comments = post.comments ? post.comments.length : 0;
+    return { likes, comments };
+  }
 }

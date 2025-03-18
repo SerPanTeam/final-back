@@ -154,4 +154,12 @@ export class PostController {
     // Возвращаем обновлённый пост
     return this.postService.bildPostResponse(updatedPost);
   }
+
+  // src/post/post.controller.ts
+  @Get(':slug/stats')
+  async getPostStats(
+    @Param('slug') slug: string,
+  ): Promise<{ likes: number; comments: number }> {
+    return this.postService.getPostStats(slug);
+  }
 }

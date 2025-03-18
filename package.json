@@ -22,6 +22,7 @@
     "sync": "npm run build && rsync -avz -e 'ssh -i ~/.ssh/id_rsa' --exclude 'node_modules' --exclude '.git' ./ panchenkowork@185.67.3.96:/home/panchenkowork/api.panchenko.work"
   },
   "dependencies": {
+    "@nestjs-modules/mailer": "^2.0.2",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.1",
     "@nestjs/core": "^11.0.1",
@@ -37,6 +38,7 @@
     "jsonwebtoken": "^9.0.2",
     "module-alias": "^2.2.3",
     "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.10.0",
     "pg": "^8.13.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",

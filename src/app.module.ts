@@ -11,12 +11,15 @@ import { ProfileModule } from './profile/prifile.module';
 import { NotificationModule } from './notification/notification.module';
 import { ChatModule } from './chat/chat.module';
 import { CommentModule } from './comment/comment.module';
+import { AuthModule } from './auth/auth.module';
+// import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    AuthModule,
     CommentModule,
     ChatModule,
     NotificationModule,

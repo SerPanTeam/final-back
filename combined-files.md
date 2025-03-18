@@ -2,6 +2,13 @@
 
 ```plaintext
 ├── src
+│   ├── auth
+│   │   ├── templates
+│   │   │   └── reset-password.hbs
+│   │   ├── auth.controller.ts
+│   │   ├── auth.module.ts
+│   │   ├── auth.service.ts
+│   │   └── password-reset-token.entity.ts
 │   ├── chat
 │   │   ├── chat.controller.ts
 │   │   ├── chat.gateway.ts
@@ -41,6 +48,7 @@
 │   │   └── profile.service.ts
 │   ├── types
 │   │   └── express-request.interface.ts
+│   ├── uploads
 │   ├── user
 │   │   ├── decorators
 │   │   │   └── user.decorator.ts
@@ -250,12 +258,15 @@ import { ProfileModule } from './profile/prifile.module';
 import { NotificationModule } from './notification/notification.module';
 import { ChatModule } from './chat/chat.module';
 import { CommentModule } from './comment/comment.module';
+import { AuthModule } from './auth/auth.module';
+// import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    AuthModule,
     CommentModule,
     ChatModule,
     NotificationModule,
@@ -292,6 +303,284 @@ export class AppService {
   getHello(): string {
     return 'Hello World! - test!';
   }
+}
+
+```
+
+## src\auth\auth.controller.ts
+
+```typescript
+// src/auth/auth.controller.ts
+
+import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { AuthService } from './auth.service';
+
+@Controller('api/auth')
+export class AuthController {
+  constructor(private readonly authService: AuthService) {}
+
+  /**
+   * POST /api/auth/forgot-password
+   * Принимаем identifier (email/username)
+   * Создаём запись в БД, отправляем письмо со ссылкой
+   */
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(@Body() body: { identifier: string }) {
+    // Вызовем сервис
+    await this.authService.createPasswordResetToken(body);
+
+    // Чтобы не палить, существует ли пользователь,
+    // обычно возвращают универсальный ответ (200 OK).
+    return { message: 'Если пользователь существует, письмо отправлено.' };
+  }
+
+  /**
+   * POST /api/auth/reset-password
+   * Принимаем token и password
+   * Ищем токен в БД, проверяем срок, обновляем пароль
+   */
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() body: { token: string; password: string }) {
+    await this.authService.resetPassword(body);
+    return { message: 'Пароль успешно сброшен.' };
+  }
+}
+
+```
+
+## src\auth\auth.module.ts
+
+```typescript
+// src/auth/auth.module.ts
+
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { MailerModule } from '@nestjs-modules/mailer';
+// import { AuthService } from './auth.service';
+// import { AuthController } from './auth.controller';
+import { PasswordResetTokenEntity } from './password-reset-token.entity';
+import { UserEntity } from 'src/user/user.entity';
+import { UserService } from 'src/user/user.service';
+import { ConfigService } from '@nestjs/config';
+import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter';
+import { join } from 'path';
+import { AuthController } from './auth.controller';
+import { AuthService } from './auth.service';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([PasswordResetTokenEntity, UserEntity]),
+    // Подключаем MailerModule
+    MailerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        // Настройки для Nodemailer
+        // Вы можете использовать любой SMTP (например, Mailtrap, Gmail, SendGrid)
+        transport: {
+          host: configService.get<string>(
+            'MAIL_HOST',
+            'rocket-cms1.hostsila.org',
+          ),
+          port: configService.get<number>('MAIL_PORT', 465),
+          auth: {
+            user: configService.get<string>(
+              'MAIL_USER',
+              'admin@api.panchenko.work',
+            ),
+            pass: configService.get<string>('MAIL_PASS', '36355693801'),
+          },
+        },
+        defaults: {
+          from: '"No Reply" <no-reply@example.com>',
+        },
+        template: {
+          dir: join(__dirname, 'templates'), // путь к папке с шаблонами писем
+          adapter: new HandlebarsAdapter(),
+          options: {
+            strict: true,
+          },
+        },
+      }),
+    }),
+  ],
+  controllers: [AuthController],
+  providers: [AuthService, UserService],
+  exports: [AuthService],
+})
+export class AuthModule {}
+
+```
+
+## src\auth\auth.service.ts
+
+```typescript
+// src/auth/auth.service.ts
+
+import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { PasswordResetTokenEntity } from './password-reset-token.entity';
+import { Repository } from 'typeorm';
+import { UserEntity } from 'src/user/user.entity';
+import { randomBytes, createHash } from 'crypto';
+import { compare, hash as bcryptHash } from 'bcrypt';
+import { UserService } from 'src/user/user.service';
+import { MailerService } from '@nestjs-modules/mailer';
+
+// DTO (для наглядности)
+interface IForgotPasswordDto {
+  identifier: string; // email / username / телефон и т.п.
+}
+interface IResetPasswordDto {
+  token: string;
+  password: string;
+}
+
+@Injectable()
+export class AuthService {
+  constructor(
+    @InjectRepository(PasswordResetTokenEntity)
+    private readonly resetTokenRepository: Repository<PasswordResetTokenEntity>,
+
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
+
+    private readonly userService: UserService,
+    private readonly mailerService: MailerService,
+  ) {}
+
+  /**
+   * 1. Ищем пользователя по email/username
+   * 2. Генерируем токен и хешируем
+   * 3. Сохраняем в таблице password_reset_tokens
+   * 4. Отправляем письмо со ссылкой на сброс
+   */
+  async createPasswordResetToken(dto: IForgotPasswordDto): Promise<void> {
+    // Ищем пользователя (по email или username)
+    const user = await this.userRepository.findOne({
+      where: [{ email: dto.identifier }, { username: dto.identifier }],
+    });
+    // Чтобы не «палить», что юзер не найден, можно возвращать 200 OK
+    // Но для примера явно бросим ошибку
+    if (!user) {
+      throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+    }
+
+    // Генерируем «сырой» токен (randomBytes)
+    const rawToken = randomBytes(32).toString('hex');
+
+    // Хешируем (например, SHA256)
+    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 час
+    const resetToken = new PasswordResetTokenEntity();
+    resetToken.tokenHash = tokenHash;
+    resetToken.user = user;
+    resetToken.expiresAt = expiresAt;
+    resetToken.used = false;
+    await this.resetTokenRepository.save(resetToken);
+
+    // Формируем ссылку на сброс (например, фронтенд: https://my-frontend.com/reset-password/...)
+    const resetLink = `https://your-frontend.com/reset-password/${rawToken}`;
+
+    // Отправляем письмо:
+    await this.mailerService.sendMail({
+      to: user.email, // кому
+      subject: 'Сброс пароля', // тема
+      // Если используете шаблоны Handlebars
+      // template: 'reset-password', // напр. reset-password.hbs в папке templates
+      // context: { resetLink, userName: user.username }
+
+      // Или можно просто text/html
+      text: `Перейдите по ссылке, чтобы сбросить пароль: ${resetLink}`,
+      html: `<p>Здравствуйте, ${user.username}.</p>
+             <p>Чтобы сбросить пароль, перейдите по ссылке:</p>
+             <a href="${resetLink}">${resetLink}</a>`,
+    });
+
+    // Возвращать можно любую полезную информацию, но обычно достаточно 200 OK
+  }
+
+  /**
+   * 1. Приходит «сырой» token
+   * 2. Делаем из него SHA256 и ищем в БД
+   * 3. Проверяем expiresAt и used
+   * 4. Если всё ок, хешируем новый пароль и сохраняем
+   * 5. Помечаем токен как used
+   */
+  async resetPassword(dto: IResetPasswordDto): Promise<void> {
+    const { token, password } = dto;
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+
+    // Ищем токен в БД
+    const tokenEntity = await this.resetTokenRepository.findOne({
+      where: { tokenHash },
+      relations: ['user'],
+    });
+    if (!tokenEntity) {
+      throw new HttpException('Invalid token', HttpStatus.BAD_REQUEST);
+    }
+    if (tokenEntity.used) {
+      throw new HttpException('Token already used', HttpStatus.BAD_REQUEST);
+    }
+    if (tokenEntity.expiresAt < new Date()) {
+      throw new HttpException('Token expired', HttpStatus.BAD_REQUEST);
+    }
+
+    // Обновляем пароль (хешируем вручную, т.к. @BeforeInsert() срабатывает только на insert)
+    const user = tokenEntity.user;
+    const hashedPassword = await bcryptHash(password, 10);
+    user.password = hashedPassword;
+    await this.userRepository.save(user);
+
+    // Помечаем токен как использованный
+    tokenEntity.used = true;
+    await this.resetTokenRepository.save(tokenEntity);
+  }
+}
+
+```
+
+## src\auth\password-reset-token.entity.ts
+
+```typescript
+// src/auth/password-reset-token.entity.ts
+
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  CreateDateColumn,
+  BaseEntity,
+} from 'typeorm';
+import { UserEntity } from 'src/user/user.entity';
+
+@Entity({ name: 'password_reset_tokens' })
+export class PasswordResetTokenEntity extends BaseEntity {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  /**
+   * Храним не сам токен, а его хеш (tokenHash),
+   * чтобы в случае утечки БД злоумышленники не могли им воспользоваться.
+   */
+  @Column()
+  tokenHash: string;
+
+  @ManyToOne(() => UserEntity, { eager: true })
+  user: UserEntity;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  // Срок действия (например, 1 час)
+  @Column()
+  expiresAt: Date;
+
+  // Пометка, что токен уже использован
+  @Column({ default: false })
+  used: boolean;
 }
 
 ```
@@ -1292,6 +1581,14 @@ export class PostController {
     // Возвращаем обновлённый пост
     return this.postService.bildPostResponse(updatedPost);
   }
+
+  // src/post/post.controller.ts
+  @Get(':slug/stats')
+  async getPostStats(
+    @Param('slug') slug: string,
+  ): Promise<{ likes: number; comments: number }> {
+    return this.postService.getPostStats(slug);
+  }
 }
 
 ```
@@ -1597,6 +1894,19 @@ export class PostService {
     post.img = filePath;
     return await this.postRepository.save(post);
   }
+
+  async getPostStats(
+    slug: string,
+  ): Promise<{ likes: number; comments: number }> {
+    const post = await this.findBySlug(slug);
+    if (!post) {
+      throw new HttpException('Post not found', HttpStatus.NOT_FOUND);
+    }
+    const likes = post.favoritesCount;
+    // Если комментарии загружаются eagerly – просто возвращаем длину массива
+    const comments = post.comments ? post.comments.length : 0;
+    return { likes, comments };
+  }
 }
 
 ```
@@ -1680,10 +1990,10 @@ export class ProfileModule {}
 ```typescript
 import {
   Controller,
-  Delete,
   Get,
   Param,
   Post,
+  Delete,
   UseGuards,
 } from '@nestjs/common';
 import { User } from 'src/user/decorators/user.decorator';
@@ -1696,40 +2006,44 @@ import { UserEntity } from 'src/user/user.entity';
 export class ProflileController {
   constructor(private readonly profileService: ProfileService) {}
 
+  // GET /profiles/:username - возвращает профиль с количеством подписчиков и подписок
   @Get(':username')
+  @UseGuards(AuthGuard)
   async getProfile(
     @User('id') currentUserId: number,
-    @Param('username') userName: string,
+    @Param('username') username: string,
   ): Promise<IProfileResponse> {
     const profile = await this.profileService.getProfile(
       currentUserId,
-      userName,
+      username,
     );
     return this.profileService.buildProfileResponse(profile);
   }
 
+  // POST /profiles/:username/follow - подписка на пользователя
   @Post(':username/follow')
   @UseGuards(AuthGuard)
   async followProfile(
     @User('id') currentUserId: number,
-    @Param('username') userName: string,
+    @Param('username') username: string,
   ): Promise<IProfileResponse> {
     const profile = await this.profileService.followProfile(
       currentUserId,
-      userName,
+      username,
     );
     return this.profileService.buildProfileResponse(profile);
   }
 
+  // DELETE /profiles/:username/follow - отписка от пользователя
   @Delete(':username/follow')
   @UseGuards(AuthGuard)
   async unFollowProfile(
     @User() currentUser: UserEntity,
-    @Param('username') userName: string,
+    @Param('username') username: string,
   ): Promise<IProfileResponse> {
     const profile = await this.profileService.unFollowProfile(
       currentUser,
-      userName,
+      username,
     );
     return this.profileService.buildProfileResponse(profile);
   }
@@ -1772,7 +2086,18 @@ export class ProfileService {
     const follow = await this.followRepository.findOne({
       where: { followerId: currentUserId, followingId: user.id },
     });
-    return { ...user, following: Boolean(follow) };
+    const followersCount = await this.followRepository.count({
+      where: { followingId: user.id },
+    });
+    const followingCount = await this.followRepository.count({
+      where: { followerId: user.id },
+    });
+    return {
+      ...user,
+      following: Boolean(follow),
+      followersCount,
+      followingCount,
+    };
   }
 
   async followProfile(
@@ -1785,25 +2110,28 @@ export class ProfileService {
     if (!user) {
       throw new HttpException('Profile does not exist', HttpStatus.NOT_FOUND);
     }
-
     if (currentUserId === user.id) {
       throw new HttpException(
         'Follower and following cant be equal',
         HttpStatus.BAD_REQUEST,
       );
     }
-
     const follow = await this.followRepository.findOne({
       where: { followerId: currentUserId, followingId: user.id },
     });
-
     if (!follow) {
       const followToCreate = new FollowEntity();
       followToCreate.followerId = currentUserId;
       followToCreate.followingId = user.id;
       await this.followRepository.save(followToCreate);
     }
-    return { ...user, following: true };
+    const followersCount = await this.followRepository.count({
+      where: { followingId: user.id },
+    });
+    const followingCount = await this.followRepository.count({
+      where: { followerId: user.id },
+    });
+    return { ...user, following: true, followersCount, followingCount };
   }
 
   async unFollowProfile(
@@ -1816,28 +2144,24 @@ export class ProfileService {
     if (!user) {
       throw new HttpException('Profile does not exist', HttpStatus.NOT_FOUND);
     }
-
     if (currentUser.id === user.id) {
       throw new HttpException(
         'Follower and following cant be equal',
         HttpStatus.BAD_REQUEST,
       );
     }
-
-    // Если user.id != currentUserId, то уведомить user
-    await this.notificationService.createNotification(
-      user,
-      currentUser,
-      'follow',
-      `Пользователь @${user.username} подписался на вас`,
-    );
-
+    // Отписываемся (в данном случае уведомление об отписке можно не отправлять)
     await this.followRepository.delete({
       followerId: currentUser.id,
       followingId: user.id,
     });
-
-    return { ...user, following: false };
+    const followersCount = await this.followRepository.count({
+      where: { followingId: user.id },
+    });
+    const followingCount = await this.followRepository.count({
+      where: { followerId: user.id },
+    });
+    return { ...user, following: false, followersCount, followingCount };
   }
 
   buildProfileResponse(profile: ProfileType): IProfileResponse {
@@ -1863,7 +2187,11 @@ export interface IProfileResponse {
 ```typescript
 import { UserType } from 'src/user/types/user.type';
 
-export type ProfileType = UserType & { following: boolean };
+export type ProfileType = UserType & {
+  following: boolean;
+  followersCount: number;
+  followingCount: number;
+};
 
 ```
 
