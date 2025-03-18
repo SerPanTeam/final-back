@@ -41,7 +41,6 @@
 │   │   └── profile.service.ts
 │   ├── types
 │   │   └── express-request.interface.ts
-│   ├── uploads
 │   ├── user
 │   │   ├── decorators
 │   │   │   └── user.decorator.ts
@@ -339,7 +338,18 @@ export class ChatController {
   }
 
   /**
-   * Новый endpoint для получения списка последних переписок.
+   * Новый endpoint для получения списка последних переписок (диалогов).
+   * Пример ожидаемого ответа:
+   * {
+   *   "conversations": [
+   *     {
+   *       "roomId": "room_1_2",
+   *       "lastMessage": { "id": 2, "content": "Hi there!", "createdAt": "2023-06-15T10:05:00.000Z" },
+   *       "otherUser": { "id": 2, "username": "janedoe", "img": "/uploads/jane-avatar.jpg" }
+   *     },
+   *     ...
+   *   ]
+   * }
    */
   @Get('conversations')
   @UseGuards(AuthGuard)
@@ -555,11 +565,17 @@ export class ChatService {
   /**
    * Метод возвращает список последних переписок для текущего пользователя.
    * Для каждого уникального roomId выбирается последнее (самое новое) сообщение,
-   * после чего определяется собеседник: если текущий пользователь является отправителем,
-   * то собеседником является получатель, иначе — отправитель.
+   * после чего определяется собеседник (otherUser) – если текущий пользователь является отправителем,
+   * то собеседником является получатель, иначе – отправитель.
+   *
+   * Возвращаемый объект имеет следующую структуру:
+   * {
+   *   roomId: string,
+   *   lastMessage: { id, content, createdAt },
+   *   otherUser: { id, username, img }
+   * }
    */
   async getLastConversations(userId: number): Promise<any[]> {
-    // Используем QueryBuilder для выборки сообщений с нужными связями и сортировкой
     const messages = await this.messageRepository
       .createQueryBuilder('message')
       .leftJoinAndSelect('message.sender', 'sender')
@@ -568,7 +584,7 @@ export class ChatService {
       .orderBy('message.createdAt', 'DESC')
       .getMany();
 
-    // Группируем сообщения по roomId – первое (самое новое) сообщение в каждой группе
+    // Группируем сообщения по roomId (берем первое, т.е. самое новое сообщение для каждой комнаты)
     const conversationsMap: { [roomId: string]: MessageEntity } = {};
     messages.forEach((msg) => {
       if (!conversationsMap[msg.roomId]) {
@@ -576,13 +592,13 @@ export class ChatService {
       }
     });
 
-    // Преобразуем объект группировки в массив и сортируем по дате последнего сообщения
+    // Преобразуем группы в массив и сортируем по дате последнего сообщения
     const conversations = Object.values(conversationsMap).sort((a, b) => {
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
     // Формируем DTO для фронтенда
-    const conversationDtos = conversations.map((msg) => {
+    return conversations.map((msg) => {
       const otherUser = msg.sender.id === userId ? msg.recipient : msg.sender;
       return {
         roomId: msg.roomId,
@@ -598,8 +614,6 @@ export class ChatService {
         },
       };
     });
-
-    return conversationDtos;
   }
 }
 
@@ -811,6 +825,7 @@ export class CommentService {
 
     await this.notificationService.createNotification(
       post.author,
+      user,
       'comment',
       `New comment from ${user.username} on your post "${post.title}"`,
     );
@@ -966,11 +981,15 @@ export class NotificationEntity extends BaseEntity {
   type: string; // Например: 'favorite', 'comment', 'follow'
 
   @Column()
-  message: string; // Короткое описание, что произошло
+  message: string; // Краткое описание события
 
-  // Пользователь, который получает это уведомление
+  // Получатель уведомления
   @ManyToOne(() => UserEntity, (user) => user.notifications, { eager: false })
   user: UserEntity;
+
+  // Инициатор действия (пользователь, который совершил действие)
+  @ManyToOne(() => UserEntity, { eager: true, nullable: true })
+  initiator: UserEntity;
 
   @CreateDateColumn()
   createdAt: Date;
@@ -1016,20 +1035,21 @@ export class NotificationService {
     private readonly notificationRepository: Repository<NotificationEntity>,
   ) {}
 
-  // Создание уведомления, например, при лайке, комментарии, подписке
+  // Создание уведомления с указанием получателя и инициатора
   async createNotification(
-    user: UserEntity,
+    recipient: UserEntity,
+    initiator: UserEntity,
     type: string,
     message: string,
   ): Promise<NotificationEntity> {
     const notification = new NotificationEntity();
-    notification.user = user; // кому уходит уведомление
+    notification.user = recipient; // получатель уведомления
+    notification.initiator = initiator; // пользователь, вызвавший уведомление
     notification.type = type;
     notification.message = message;
     return await this.notificationRepository.save(notification);
   }
 
-  // Получить все уведомления пользователя
   async getUserNotifications(userId: number): Promise<NotificationEntity[]> {
     return this.notificationRepository.find({
       where: { user: { id: userId } },
@@ -1037,7 +1057,6 @@ export class NotificationService {
     });
   }
 
-  // Пометить уведомление как прочитанное
   async markAsRead(notificationId: number, userId: number): Promise<void> {
     const notification = await this.notificationRepository.findOne({
       where: { id: notificationId },
@@ -1529,9 +1548,10 @@ export class PostService {
       // Создаём уведомление для автора поста:
       if (post.author.id !== currentUserId) {
         await this.notificationService.createNotification(
-          post.author, // пользователь, которому придёт уведомление
+          post.author, // получатель уведомления – автор поста
+          user, // инициатор – текущий пользователь, который поставил лайк
           'favorite',
-          `Пользователь @${user.username} поставил лайк на ваш пост "${post.title}"`,
+          `User @${user.username}  has liked your post "${post.title}"`,
         );
       }
     }
@@ -1670,6 +1690,7 @@ import { User } from 'src/user/decorators/user.decorator';
 import { IProfileResponse } from './types/profile-response.interface';
 import { ProfileService } from './profile.service';
 import { AuthGuard } from 'src/user/guards/auth.guard';
+import { UserEntity } from 'src/user/user.entity';
 
 @Controller('profiles')
 export class ProflileController {
@@ -1703,11 +1724,11 @@ export class ProflileController {
   @Delete(':username/follow')
   @UseGuards(AuthGuard)
   async unFollowProfile(
-    @User('id') currentUserId: number,
+    @User() currentUser: UserEntity,
     @Param('username') userName: string,
   ): Promise<IProfileResponse> {
     const profile = await this.profileService.unFollowProfile(
-      currentUserId,
+      currentUser,
       userName,
     );
     return this.profileService.buildProfileResponse(profile);
@@ -1786,7 +1807,7 @@ export class ProfileService {
   }
 
   async unFollowProfile(
-    currentUserId: number,
+    currentUser: UserEntity,
     userName: string,
   ): Promise<ProfileType> {
     const user = await this.userRepository.findOne({
@@ -1796,7 +1817,7 @@ export class ProfileService {
       throw new HttpException('Profile does not exist', HttpStatus.NOT_FOUND);
     }
 
-    if (currentUserId === user.id) {
+    if (currentUser.id === user.id) {
       throw new HttpException(
         'Follower and following cant be equal',
         HttpStatus.BAD_REQUEST,
@@ -1805,13 +1826,14 @@ export class ProfileService {
 
     // Если user.id != currentUserId, то уведомить user
     await this.notificationService.createNotification(
-      user, // получает уведомление
+      user,
+      currentUser,
       'follow',
       `Пользователь @${user.username} подписался на вас`,
     );
 
     await this.followRepository.delete({
-      followerId: currentUserId,
+      followerId: currentUser.id,
       followingId: user.id,
     });
 

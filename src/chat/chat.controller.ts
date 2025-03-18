@@ -37,7 +37,18 @@ export class ChatController {
   }
 
   /**
-   * Новый endpoint для получения списка последних переписок.
+   * Новый endpoint для получения списка последних переписок (диалогов).
+   * Пример ожидаемого ответа:
+   * {
+   *   "conversations": [
+   *     {
+   *       "roomId": "room_1_2",
+   *       "lastMessage": { "id": 2, "content": "Hi there!", "createdAt": "2023-06-15T10:05:00.000Z" },
+   *       "otherUser": { "id": 2, "username": "janedoe", "img": "/uploads/jane-avatar.jpg" }
+   *     },
+   *     ...
+   *   ]
+   * }
    */
   @Get('conversations')
   @UseGuards(AuthGuard)

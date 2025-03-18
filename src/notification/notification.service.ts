@@ -11,20 +11,21 @@ export class NotificationService {
     private readonly notificationRepository: Repository<NotificationEntity>,
   ) {}
 
-  // Создание уведомления, например, при лайке, комментарии, подписке
+  // Создание уведомления с указанием получателя и инициатора
   async createNotification(
-    user: UserEntity,
+    recipient: UserEntity,
+    initiator: UserEntity,
     type: string,
     message: string,
   ): Promise<NotificationEntity> {
     const notification = new NotificationEntity();
-    notification.user = user; // кому уходит уведомление
+    notification.user = recipient; // получатель уведомления
+    notification.initiator = initiator; // пользователь, вызвавший уведомление
     notification.type = type;
     notification.message = message;
     return await this.notificationRepository.save(notification);
   }
 
-  // Получить все уведомления пользователя
   async getUserNotifications(userId: number): Promise<NotificationEntity[]> {
     return this.notificationRepository.find({
       where: { user: { id: userId } },
@@ -32,7 +33,6 @@ export class NotificationService {
     });
   }
 
-  // Пометить уведомление как прочитанное
   async markAsRead(notificationId: number, userId: number): Promise<void> {
     const notification = await this.notificationRepository.findOne({
       where: { id: notificationId },

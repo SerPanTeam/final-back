@@ -17,11 +17,15 @@ export class NotificationEntity extends BaseEntity {
   type: string; // Например: 'favorite', 'comment', 'follow'
 
   @Column()
-  message: string; // Короткое описание, что произошло
+  message: string; // Краткое описание события
 
-  // Пользователь, который получает это уведомление
+  // Получатель уведомления
   @ManyToOne(() => UserEntity, (user) => user.notifications, { eager: false })
   user: UserEntity;
+
+  // Инициатор действия (пользователь, который совершил действие)
+  @ManyToOne(() => UserEntity, { eager: true, nullable: true })
+  initiator: UserEntity;
 
   @CreateDateColumn()
   createdAt: Date;

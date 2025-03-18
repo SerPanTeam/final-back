@@ -166,9 +166,10 @@ export class PostService {
       // Создаём уведомление для автора поста:
       if (post.author.id !== currentUserId) {
         await this.notificationService.createNotification(
-          post.author, // пользователь, которому придёт уведомление
+          post.author, // получатель уведомления – автор поста
+          user, // инициатор – текущий пользователь, который поставил лайк
           'favorite',
-          `Пользователь @${user.username} поставил лайк на ваш пост "${post.title}"`,
+          `User @${user.username}  has liked your post "${post.title}"`,
         );
       }
     }

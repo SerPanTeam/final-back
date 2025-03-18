@@ -65,7 +65,7 @@ export class ProfileService {
   }
 
   async unFollowProfile(
-    currentUserId: number,
+    currentUser: UserEntity,
     userName: string,
   ): Promise<ProfileType> {
     const user = await this.userRepository.findOne({
@@ -75,7 +75,7 @@ export class ProfileService {
       throw new HttpException('Profile does not exist', HttpStatus.NOT_FOUND);
     }
 
-    if (currentUserId === user.id) {
+    if (currentUser.id === user.id) {
       throw new HttpException(
         'Follower and following cant be equal',
         HttpStatus.BAD_REQUEST,
@@ -84,13 +84,14 @@ export class ProfileService {
 
     // Если user.id != currentUserId, то уведомить user
     await this.notificationService.createNotification(
-      user, // получает уведомление
+      user,
+      currentUser,
       'follow',
       `Пользователь @${user.username} подписался на вас`,
     );
 
     await this.followRepository.delete({
-      followerId: currentUserId,
+      followerId: currentUser.id,
       followingId: user.id,
     });
 

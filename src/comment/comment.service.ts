@@ -36,6 +36,7 @@ export class CommentService {
 
     await this.notificationService.createNotification(
       post.author,
+      user,
       'comment',
       `New comment from ${user.username} on your post "${post.title}"`,
     );

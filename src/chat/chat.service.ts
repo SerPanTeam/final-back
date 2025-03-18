@@ -26,11 +26,17 @@ export class ChatService {
   /**
    * Метод возвращает список последних переписок для текущего пользователя.
    * Для каждого уникального roomId выбирается последнее (самое новое) сообщение,
-   * после чего определяется собеседник: если текущий пользователь является отправителем,
-   * то собеседником является получатель, иначе — отправитель.
+   * после чего определяется собеседник (otherUser) – если текущий пользователь является отправителем,
+   * то собеседником является получатель, иначе – отправитель.
+   *
+   * Возвращаемый объект имеет следующую структуру:
+   * {
+   *   roomId: string,
+   *   lastMessage: { id, content, createdAt },
+   *   otherUser: { id, username, img }
+   * }
    */
   async getLastConversations(userId: number): Promise<any[]> {
-    // Используем QueryBuilder для выборки сообщений с нужными связями и сортировкой
     const messages = await this.messageRepository
       .createQueryBuilder('message')
       .leftJoinAndSelect('message.sender', 'sender')
@@ -39,7 +45,7 @@ export class ChatService {
       .orderBy('message.createdAt', 'DESC')
       .getMany();
 
-    // Группируем сообщения по roomId – первое (самое новое) сообщение в каждой группе
+    // Группируем сообщения по roomId (берем первое, т.е. самое новое сообщение для каждой комнаты)
     const conversationsMap: { [roomId: string]: MessageEntity } = {};
     messages.forEach((msg) => {
       if (!conversationsMap[msg.roomId]) {
@@ -47,13 +53,13 @@ export class ChatService {
       }
     });
 
-    // Преобразуем объект группировки в массив и сортируем по дате последнего сообщения
+    // Преобразуем группы в массив и сортируем по дате последнего сообщения
     const conversations = Object.values(conversationsMap).sort((a, b) => {
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
     // Формируем DTO для фронтенда
-    const conversationDtos = conversations.map((msg) => {
+    return conversations.map((msg) => {
       const otherUser = msg.sender.id === userId ? msg.recipient : msg.sender;
       return {
         roomId: msg.roomId,
@@ -69,7 +75,5 @@ export class ChatService {
         },
       };
     });
-
-    return conversationDtos;
   }
 }
