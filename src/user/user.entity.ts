@@ -37,7 +37,11 @@ export class UserEntity {
   posts: PostEntity[];
 
   @ManyToMany(() => PostEntity)
-  @JoinTable()
+  @JoinTable({
+    name: 'users_favorites_posts', // название таблицы, где хранится связь
+    joinColumn: { name: 'userid', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'postid', referencedColumnName: 'id' },
+  })
   favorites: PostEntity[];
 
   @OneToMany(() => CommentEntity, (comment) => comment.author)

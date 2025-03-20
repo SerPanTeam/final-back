@@ -48,7 +48,6 @@
 │   │   └── profile.service.ts
 │   ├── types
 │   │   └── express-request.interface.ts
-│   ├── uploads
 │   ├── user
 │   │   ├── decorators
 │   │   │   └── user.decorator.ts
@@ -92,6 +91,7 @@
 ├── package-lock.json
 ├── package.json
 ├── README.md
+├── test-api.rest
 ├── tsconfig.build.json
 └── tsconfig.json
 
@@ -384,6 +384,7 @@ import { AuthService } from './auth.service';
             'rocket-cms1.hostsila.org',
           ),
           port: configService.get<number>('MAIL_PORT', 465),
+          secure: true, // важный момент для 465
           auth: {
             user: configService.get<string>(
               'MAIL_USER',
@@ -423,15 +424,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { PasswordResetTokenEntity } from './password-reset-token.entity';
 import { Repository } from 'typeorm';
 import { UserEntity } from 'src/user/user.entity';
-import { randomBytes, createHash } from 'crypto';
-import { compare, hash as bcryptHash } from 'bcrypt';
+import { createHash, randomBytes } from 'crypto';
+import { hash as bcryptHash } from 'bcrypt';
 import { UserService } from 'src/user/user.service';
 import { MailerService } from '@nestjs-modules/mailer';
 
-// DTO (для наглядности)
 interface IForgotPasswordDto {
   identifier: string; // email / username / телефон и т.п.
 }
+
 interface IResetPasswordDto {
   token: string;
   password: string;
@@ -451,28 +452,33 @@ export class AuthService {
   ) {}
 
   /**
-   * 1. Ищем пользователя по email/username
-   * 2. Генерируем токен и хешируем
-   * 3. Сохраняем в таблице password_reset_tokens
-   * 4. Отправляем письмо со ссылкой на сброс
+   * 1) Ищем пользователя по email/username
+   * 2) Генерируем случайный токен и хешируем его
+   * 3) Сохраняем в таблице password_reset_tokens
+   * 4) Отправляем письмо со ссылкой на сброс
    */
   async createPasswordResetToken(dto: IForgotPasswordDto): Promise<void> {
-    // Ищем пользователя (по email или username)
+    // 1. Ищем пользователя в БД
     const user = await this.userRepository.findOne({
       where: [{ email: dto.identifier }, { username: dto.identifier }],
     });
-    // Чтобы не «палить», что юзер не найден, можно возвращать 200 OK
-    // Но для примера явно бросим ошибку
+
+    // Чтобы «не палить» существование пользователя, можно всегда возвращать 200 OK,
+    // но для примера выбрасываем явную ошибку:
     if (!user) {
       throw new HttpException('User not found', HttpStatus.NOT_FOUND);
     }
 
-    // Генерируем «сырой» токен (randomBytes)
+    // 2. Генерируем «сырой» токен
     const rawToken = randomBytes(32).toString('hex');
 
-    // Хешируем (например, SHA256)
+    // Хешируем токен (SHA256), чтобы хранить в БД
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 час
+
+    // Устанавливаем срок действия (например, 1 час)
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+    // 3. Сохраняем запись в таблице
     const resetToken = new PasswordResetTokenEntity();
     resetToken.tokenHash = tokenHash;
     resetToken.user = user;
@@ -480,39 +486,42 @@ export class AuthService {
     resetToken.used = false;
     await this.resetTokenRepository.save(resetToken);
 
-    // Формируем ссылку на сброс (например, фронтенд: https://my-frontend.com/reset-password/...)
-    const resetLink = `https://your-frontend.com/reset-password/${rawToken}`;
+    // 4. Формируем ссылку на сброс (URL фронтенда)
+    const resetLink = `https://v0-final-proj.vercel.app/reset-password/${rawToken}`;
 
-    // Отправляем письмо:
+    // 5. Отправляем письмо
     await this.mailerService.sendMail({
-      to: user.email, // кому
-      subject: 'Сброс пароля', // тема
-      // Если используете шаблоны Handlebars
-      // template: 'reset-password', // напр. reset-password.hbs в папке templates
-      // context: { resetLink, userName: user.username }
-
-      // Или можно просто text/html
+      to: user.email,
+      subject: 'Сброс пароля',
+      // Если используете Handlebars-шаблон:
+      // template: 'reset-password',
+      // context: { resetLink, userName: user.username },
       text: `Перейдите по ссылке, чтобы сбросить пароль: ${resetLink}`,
-      html: `<p>Здравствуйте, ${user.username}.</p>
-             <p>Чтобы сбросить пароль, перейдите по ссылке:</p>
-             <a href="${resetLink}">${resetLink}</a>`,
+      html: `
+        <p>Здравствуйте, ${user.username}.</p>
+        <p>Чтобы сбросить пароль, перейдите по ссылке:</p>
+        <a href="${resetLink}">${resetLink}</a>
+      `,
     });
 
-    // Возвращать можно любую полезную информацию, но обычно достаточно 200 OK
+    // Всё, вернём 200 OK
   }
 
   /**
-   * 1. Приходит «сырой» token
-   * 2. Делаем из него SHA256 и ищем в БД
-   * 3. Проверяем expiresAt и used
-   * 4. Если всё ок, хешируем новый пароль и сохраняем
-   * 5. Помечаем токен как used
+   * 1) Ищем токен в БД (по SHA256)
+   * 2) Проверяем, не истёк ли срок, не used ли
+   * 3) Генерируем новый хеш пароля
+   * 4) Обновляем поле password напрямую в базе (userRepository.update)
+   * 5) Помечаем токен used = true
    */
+
   async resetPassword(dto: IResetPasswordDto): Promise<void> {
     const { token, password } = dto;
+
+    // Хешируем «сырой» token из тела запроса, чтобы найти в БД
     const tokenHash = createHash('sha256').update(token).digest('hex');
 
-    // Ищем токен в БД
+    // Находим запись токена в таблице password_reset_tokens
     const tokenEntity = await this.resetTokenRepository.findOne({
       where: { tokenHash },
       relations: ['user'],
@@ -527,15 +536,20 @@ export class AuthService {
       throw new HttpException('Token expired', HttpStatus.BAD_REQUEST);
     }
 
-    // Обновляем пароль (хешируем вручную, т.к. @BeforeInsert() срабатывает только на insert)
-    const user = tokenEntity.user;
+    // 1. Хешируем новый пароль
     const hashedPassword = await bcryptHash(password, 10);
-    user.password = hashedPassword;
-    await this.userRepository.save(user);
 
-    // Помечаем токен как использованный
+    // 2. Меняем пароль напрямую в таблице users
+    //    (не "save", а "update" — так надёжнее с учётом {select: false})
+    await this.userRepository.update(tokenEntity.user.id, {
+      password: hashedPassword,
+    });
+
+    // 3. Помечаем токен как использованный
     tokenEntity.used = true;
     await this.resetTokenRepository.save(tokenEntity);
+
+    // Теперь в базе точно хранится новый пароль (захешированный)
   }
 }
 
@@ -1116,7 +1130,7 @@ export class CommentService {
       post.author,
       user,
       'comment',
-      `New comment from ${user.username} on your post "${post.title}"`,
+      `New comment from @${user.username} on your post "${post.title}"`,
     );
 
     return await this.commentRepository.save(newComment);
@@ -1456,6 +1470,15 @@ import { extname } from 'path';
 export class PostController {
   constructor(private readonly postService: PostService) {}
 
+  @Get('liked')
+  async checkLiked(
+    @Query('userId') userId: number,
+    @Query('postId') postId: number,
+  ): Promise<{ liked: boolean }> {
+    const liked = await this.postService.checkIfFavorited(userId, postId);
+    return { liked };
+  }
+
   @Get()
   async findAll(
     @User('id') currentUserId: number,
@@ -1742,6 +1765,7 @@ export class PostService {
       });
       favoriteIds = currentUser?.favorites.map((favorite) => favorite.id);
     }
+    // console.log(favoriteIds);
     const posts = await queryBuilder.getMany();
     const postsWithFavorites = posts.map((post) => {
       const favorited = favoriteIds?.includes(post.id);
@@ -1751,6 +1775,31 @@ export class PostService {
     return { posts: postsWithFavorites, postsCount };
   }
 
+  // async getFeed(currenUserId: number, query: any): Promise<IPostsResponse> {
+  //   const follows = await this.followRepository.find({
+  //     where: { followerId: currenUserId },
+  //   });
+  //   if (follows.length === 0) {
+  //     return { posts: [], postsCount: 0 };
+  //   }
+  //   const followingUserIds = follows.map((follow) => follow.followingId);
+  //   const queryBuilder = this.dataSourse
+  //     .getRepository(PostEntity)
+  //     .createQueryBuilder('posts')
+  //     .leftJoinAndSelect('posts.author', 'author')
+  //     .where('posts.authorId IN (:...ids)', { ids: followingUserIds });
+
+  //   queryBuilder.orderBy('posts.createdAt', 'DESC');
+
+  //   const postsCount = await queryBuilder.getCount();
+
+  //   if (query.limit) queryBuilder.limit(query.limit);
+  //   if (query.offset) queryBuilder.offset(query.offset);
+
+  //   const posts = await queryBuilder.getMany();
+  //   return { posts: posts, postsCount: postsCount };
+  // }
+
   async getFeed(currenUserId: number, query: any): Promise<IPostsResponse> {
     const follows = await this.followRepository.find({
       where: { followerId: currenUserId },
@@ -1759,21 +1808,35 @@ export class PostService {
       return { posts: [], postsCount: 0 };
     }
     const followingUserIds = follows.map((follow) => follow.followingId);
+
     const queryBuilder = this.dataSourse
       .getRepository(PostEntity)
       .createQueryBuilder('posts')
       .leftJoinAndSelect('posts.author', 'author')
-      .where('posts.authorId IN (:...ids)', { ids: followingUserIds });
-
-    queryBuilder.orderBy('posts.createdAt', 'DESC');
+      .where('posts.authorId IN (:...ids)', { ids: followingUserIds })
+      .orderBy('posts.createdAt', 'DESC');
 
     const postsCount = await queryBuilder.getCount();
-
     if (query.limit) queryBuilder.limit(query.limit);
     if (query.offset) queryBuilder.offset(query.offset);
 
     const posts = await queryBuilder.getMany();
-    return { posts: posts, postsCount: postsCount };
+
+    // ТА САМАЯ ЛОГИКА: для выставления favorited
+    let favoriteIds: number[] | undefined = [];
+    if (currenUserId) {
+      const currentUser = await this.userRepository.findOne({
+        where: { id: currenUserId },
+        relations: ['favorites'],
+      });
+      favoriteIds = currentUser?.favorites.map((fav) => fav.id);
+    }
+    const postsWithFavorites = posts.map((post) => {
+      const favorited = favoriteIds?.includes(post.id);
+      return { ...post, favorited };
+    });
+
+    return { posts: postsWithFavorites, postsCount };
   }
 
   async createPost(
@@ -1791,8 +1854,26 @@ export class PostService {
     return await this.postRepository.save(savedPost);
   }
 
-  bildPostResponse(post: PostEntity): IPostResponse {
-    return { post };
+  // bildPostResponse(post: PostEntity): IPostResponse {
+  //   return { post };
+  // }
+
+  async bildPostResponse(
+    post: PostEntity,
+    currentUserId?: number,
+  ): Promise<IPostResponse> {
+    let favorited = false;
+    if (currentUserId) {
+      const currentUser = await this.userRepository.findOne({
+        where: { id: currentUserId },
+        relations: ['favorites'],
+      });
+      favorited =
+        currentUser?.favorites.some((fav) => fav.id === post.id) || false;
+    }
+    // Добавляем свойство favorited непосредственно в экземпляр post и приводим тип
+    (post as PostEntity & { favorited: boolean }).favorited = favorited;
+    return { post: post as PostEntity & { favorited: boolean } };
   }
 
   async findBySlug(slug: string): Promise<PostEntity | null> {
@@ -1907,6 +1988,17 @@ export class PostService {
     const comments = post.comments ? post.comments.length : 0;
     return { likes, comments };
   }
+
+  async checkIfFavorited(userId: number, postId: number): Promise<boolean> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      relations: ['favorites'],
+    });
+    if (!user) {
+      throw new HttpException('Пользователь не найден', HttpStatus.NOT_FOUND);
+    }
+    return user.favorites.some((favorite) => favorite.id === postId);
+  }
 }
 
 ```
@@ -1917,7 +2009,7 @@ export class PostService {
 import { PostEntity } from '../post.entity';
 
 export interface IPostResponse {
-  post: PostEntity;
+  post: PostEntity & { favorited: boolean };
 }
 
 ```
@@ -2850,7 +2942,11 @@ export class UserEntity {
   posts: PostEntity[];
 
   @ManyToMany(() => PostEntity)
-  @JoinTable()
+  @JoinTable({
+    name: 'users_favorites_posts', // название таблицы, где хранится связь
+    joinColumn: { name: 'userid', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'postid', referencedColumnName: 'id' },
+  })
   favorites: PostEntity[];
 
   @OneToMany(() => CommentEntity, (comment) => comment.author)

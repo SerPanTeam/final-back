@@ -1,0 +1,97 @@
+# Переменные (константы) для REST Client
+@baseUrl = http://api.panchenko.work
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTQsInVzZXJuYW1lIjoicGFuY2hlbmtvIiwiZW1haWwiOiJwYW5jaGVua28ubW9iaUBnbWFpbC5jb20iLCJpYXQiOjE3NDI0MTA1ODcsImV4cCI6MTc0MjQ5Njk4N30.2KZr8_o4gsjpsVG5fVgw2JoI2M5td1eZlEPTSRgw5qM
+
+###
+# 1. Проверка корневого эндпоинта
+GET {{baseUrl}}/
+Accept: application/json
+
+###
+# 2. Авторизация (пример входа пользователя)
+# Если нужно — поменяйте endpoint, тело запроса и т. д.
+POST {{baseUrl}}/users/login
+Content-Type: application/json
+
+{
+  "user": {
+    "email": "panchenko.mobi@gmail.com",
+    "password": "36355693801"
+  }
+}
+
+###
+# 3. Получение текущего пользователя (защищённый эндпоинт)
+GET {{baseUrl}}/user
+Authorization: Bearer {{token}}
+Accept: application/json###
+
+###
+# 3. Получение текущего пользователя (защищённый эндпоинт)
+GET {{baseUrl}}/posts/liked?userId=14&postId=6
+Authorization: Bearer {{token}}
+Accept: application/json
+
+###
+# 4. Отправка письма для сброса пароля
+POST {{baseUrl}}/api/auth/forgot-password
+Content-Type: application/json
+
+{
+  "identifier": "test@example.com"
+}
+
+###
+# 5. Сброс пароля по токену (придёт на почту)
+POST {{baseUrl}}/api/auth/reset-password
+Content-Type: application/json
+
+{
+  "token": "RAW_TOKEN_ИЗ_ПИСЬМА",
+  "password": "newPass123!"
+}
+
+###
+# 6. Получение списка постов (публичный эндпоинт)
+GET {{baseUrl}}/posts
+Authorization: Bearer {{token}}
+Accept: application/json
+
+###
+# 7. Создание нового поста (защищённый эндпоинт)
+POST {{baseUrl}}/posts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "post": {
+    "title": "Мой заголовок",
+    "content": "Пример содержимого",
+    "img": "путь_или_url_картинки.jpg"
+  }
+}
+
+###
+# 8. Получить пост по slug
+GET {{baseUrl}}/posts/logotip-dlya-kvartirnogo-sajta-7
+Accept: application/json
+Authorization: Bearer {{token}}
+
+
+###
+# 9. Обновить пост (slug = "мой-заголовок-1")
+PUT {{baseUrl}}/posts/мой-заголовок-1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "post": {
+    "title": "Обновлённый заголовок",
+    "content": "Новое содержимое",
+    "img": "новый_путь_картинки.jpg"
+  }
+}
+
+###
+# 10. Удалить пост (slug = "мой-заголовок-1")
+DELETE {{baseUrl}}/post

@@ -38,7 +38,7 @@ export class CommentService {
       post.author,
       user,
       'comment',
-      `New comment from ${user.username} on your post "${post.title}"`,
+      `New comment from @${user.username} on your post "${post.title}"`,
     );
 
     return await this.commentRepository.save(newComment);

@@ -29,6 +29,15 @@ import { extname } from 'path';
 export class PostController {
   constructor(private readonly postService: PostService) {}
 
+  @Get('liked')
+  async checkLiked(
+    @Query('userId') userId: number,
+    @Query('postId') postId: number,
+  ): Promise<{ liked: boolean }> {
+    const liked = await this.postService.checkIfFavorited(userId, postId);
+    return { liked };
+  }
+
   @Get()
   async findAll(
     @User('id') currentUserId: number,

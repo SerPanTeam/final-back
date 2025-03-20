@@ -1,4 +1,4 @@
-'use strict';
+// 'use strict';
 
 // combine-files.js
 const fs = require('fs');

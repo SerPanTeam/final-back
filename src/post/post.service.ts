@@ -63,6 +63,7 @@ export class PostService {
       });
       favoriteIds = currentUser?.favorites.map((favorite) => favorite.id);
     }
+    // console.log(favoriteIds);
     const posts = await queryBuilder.getMany();
     const postsWithFavorites = posts.map((post) => {
       const favorited = favoriteIds?.includes(post.id);
@@ -72,6 +73,31 @@ export class PostService {
     return { posts: postsWithFavorites, postsCount };
   }
 
+  // async getFeed(currenUserId: number, query: any): Promise<IPostsResponse> {
+  //   const follows = await this.followRepository.find({
+  //     where: { followerId: currenUserId },
+  //   });
+  //   if (follows.length === 0) {
+  //     return { posts: [], postsCount: 0 };
+  //   }
+  //   const followingUserIds = follows.map((follow) => follow.followingId);
+  //   const queryBuilder = this.dataSourse
+  //     .getRepository(PostEntity)
+  //     .createQueryBuilder('posts')
+  //     .leftJoinAndSelect('posts.author', 'author')
+  //     .where('posts.authorId IN (:...ids)', { ids: followingUserIds });
+
+  //   queryBuilder.orderBy('posts.createdAt', 'DESC');
+
+  //   const postsCount = await queryBuilder.getCount();
+
+  //   if (query.limit) queryBuilder.limit(query.limit);
+  //   if (query.offset) queryBuilder.offset(query.offset);
+
+  //   const posts = await queryBuilder.getMany();
+  //   return { posts: posts, postsCount: postsCount };
+  // }
+
   async getFeed(currenUserId: number, query: any): Promise<IPostsResponse> {
     const follows = await this.followRepository.find({
       where: { followerId: currenUserId },
@@ -80,21 +106,35 @@ export class PostService {
       return { posts: [], postsCount: 0 };
     }
     const followingUserIds = follows.map((follow) => follow.followingId);
+
     const queryBuilder = this.dataSourse
       .getRepository(PostEntity)
       .createQueryBuilder('posts')
       .leftJoinAndSelect('posts.author', 'author')
-      .where('posts.authorId IN (:...ids)', { ids: followingUserIds });
-
-    queryBuilder.orderBy('posts.createdAt', 'DESC');
+      .where('posts.authorId IN (:...ids)', { ids: followingUserIds })
+      .orderBy('posts.createdAt', 'DESC');
 
     const postsCount = await queryBuilder.getCount();
-
     if (query.limit) queryBuilder.limit(query.limit);
     if (query.offset) queryBuilder.offset(query.offset);
 
     const posts = await queryBuilder.getMany();
-    return { posts: posts, postsCount: postsCount };
+
+    // ТА САМАЯ ЛОГИКА: для выставления favorited
+    let favoriteIds: number[] | undefined = [];
+    if (currenUserId) {
+      const currentUser = await this.userRepository.findOne({
+        where: { id: currenUserId },
+        relations: ['favorites'],
+      });
+      favoriteIds = currentUser?.favorites.map((fav) => fav.id);
+    }
+    const postsWithFavorites = posts.map((post) => {
+      const favorited = favoriteIds?.includes(post.id);
+      return { ...post, favorited };
+    });
+
+    return { posts: postsWithFavorites, postsCount };
   }
 
   async createPost(
@@ -112,8 +152,26 @@ export class PostService {
     return await this.postRepository.save(savedPost);
   }
 
-  bildPostResponse(post: PostEntity): IPostResponse {
-    return { post };
+  // bildPostResponse(post: PostEntity): IPostResponse {
+  //   return { post };
+  // }
+
+  async bildPostResponse(
+    post: PostEntity,
+    currentUserId?: number,
+  ): Promise<IPostResponse> {
+    let favorited = false;
+    if (currentUserId) {
+      const currentUser = await this.userRepository.findOne({
+        where: { id: currentUserId },
+        relations: ['favorites'],
+      });
+      favorited =
+        currentUser?.favorites.some((fav) => fav.id === post.id) || false;
+    }
+    // Добавляем свойство favorited непосредственно в экземпляр post и приводим тип
+    (post as PostEntity & { favorited: boolean }).favorited = favorited;
+    return { post: post as PostEntity & { favorited: boolean } };
   }
 
   async findBySlug(slug: string): Promise<PostEntity | null> {
@@ -227,5 +285,16 @@ export class PostService {
     // Если комментарии загружаются eagerly – просто возвращаем длину массива
     const comments = post.comments ? post.comments.length : 0;
     return { likes, comments };
+  }
+
+  async checkIfFavorited(userId: number, postId: number): Promise<boolean> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      relations: ['favorites'],
+    });
+    if (!user) {
+      throw new HttpException('Пользователь не найден', HttpStatus.NOT_FOUND);
+    }
+    return user.favorites.some((favorite) => favorite.id === postId);
   }
 }
