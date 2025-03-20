@@ -85,11 +85,13 @@
 ├── .prettierrc
 ├── codewr.js
 ├── combined-files.md
+├── comments-test-api.rest
 ├── Dockerfile
 ├── eslint.config.mjs
 ├── nest-cli.json
 ├── package-lock.json
 ├── package.json
+├── posts-test-api.rest
 ├── README.md
 ├── test-api.rest
 ├── tsconfig.build.json
@@ -1069,7 +1071,7 @@ export class CommentService {
   async findCommentsBySlug(slug: string): Promise<CommentEntity[]> {
     const comments = await this.commentRepository.find({
       where: { post: { slug } },
-      order: { createdAt: 'DESC' },
+      order: { createdAt: 'ASC' },
     });
     return comments;
   }
@@ -1569,7 +1571,9 @@ export class PostEntity {
   @ManyToOne(() => UserEntity, (user) => user.posts, { eager: true })
   author: UserEntity;
 
-  @OneToMany(() => CommentEntity, (comment) => comment.post, { eager: true })
+  @OneToMany(() => CommentEntity, (comment) => comment.post, {
+    eager: true,
+  })
   comments: CommentEntity[];
 }
 
@@ -1779,7 +1783,13 @@ export class PostService {
   }
 
   async findBySlug(slug: string): Promise<PostEntity | null> {
-    return await this.postRepository.findOne({ where: { slug } });
+    const post = await this.postRepository.findOne({ where: { slug } });
+    if (post)
+      post.comments.sort(
+        (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+      );
+
+    return post;
   }
 
   async deleteBySlug(

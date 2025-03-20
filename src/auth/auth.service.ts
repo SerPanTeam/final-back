@@ -68,7 +68,7 @@ export class AuthService {
     await this.resetTokenRepository.save(resetToken);
 
     // 4. Формируем ссылку на сброс (URL фронтенда)
-    const resetLink = `https://v0-final-proj.vercel.app/reset-password/${rawToken}`;
+    const resetLink = `https://realtygram.panchenko.work/reset-password/${rawToken}`;
 
     // 5. Отправляем письмо
     await this.mailerService.sendMail({
