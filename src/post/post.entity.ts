@@ -46,6 +46,8 @@ export class PostEntity {
   @ManyToOne(() => UserEntity, (user) => user.posts, { eager: true })
   author: UserEntity;
 
-  @OneToMany(() => CommentEntity, (comment) => comment.post, { eager: true })
+  @OneToMany(() => CommentEntity, (comment) => comment.post, {
+    eager: true,
+  })
   comments: CommentEntity[];
 }

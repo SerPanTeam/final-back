@@ -175,7 +175,13 @@ export class PostService {
   }
 
   async findBySlug(slug: string): Promise<PostEntity | null> {
-    return await this.postRepository.findOne({ where: { slug } });
+    const post = await this.postRepository.findOne({ where: { slug } });
+    if (post)
+      post.comments.sort(
+        (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+      );
+
+    return post;
   }
 
   async deleteBySlug(
@@ -288,13 +294,23 @@ export class PostService {
   }
 
   async checkIfFavorited(userId: number, postId: number): Promise<boolean> {
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-      relations: ['favorites'],
-    });
-    if (!user) {
-      throw new HttpException('Пользователь не найден', HttpStatus.NOT_FOUND);
-    }
-    return user.favorites.some((favorite) => favorite.id === postId);
+    // const user = await this.userRepository.findOne({
+    //   where: { id: userId },
+    //   relations: ['favorites'],
+    // });
+    // if (!user) {
+    //   throw new HttpException('Пользователь не найден', HttpStatus.NOT_FOUND);
+    // }
+    // return user.favorites.some((favorite) => favorite.id === postId);
+
+    const result = await this.userRepository
+      .createQueryBuilder('user') // Создаем запрос, называя основную сущность "user"
+      .leftJoinAndSelect('user.favorites', 'favorite') // Выполняем левое соединение с таблицей "favorites" и называем её "favorite"
+      .where('user.id = :userId', { userId }) // Указываем условие на ID пользователя
+      .andWhere('favorite.id = :postId', { postId }) // Указываем дополнительное условие на ID поста
+      .getOne(); // Получаем одну запись, соответствующую условиям
+
+    console.log('QueryBuilder result:', result); // Логируем результат
+    return !!result; // Возвращаем булево значение: true, если запись найдена, иначе false
   }
 }

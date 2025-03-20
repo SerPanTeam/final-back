@@ -1,0 +1,94 @@
+# Переменные (константы) для REST Client
+@baseUrl = https://api.panchenko.work
+@token = ВСТАВЬТЕ_СВОЙ_JWT_ТОКЕН_СЮДА
+
+###
+# 1. Получить все посты (публичный эндпоинт)
+#    Параметры (limit, offset) опциональны
+GET {{baseUrl}}/posts?limit=5&offset=0
+Accept: application/json
+
+###
+# 2. Проверить, лайкнут ли пост определённым пользователем (userId, postId)
+GET {{baseUrl}}/posts/liked?userId=1&postId=10
+Accept: application/json
+
+###
+# 3. Получить "ленту" (feed) — список постов от тех, на кого подписан текущий пользователь
+#    Требуется авторизация
+GET {{baseUrl}}/posts/feed
+Authorization: Bearer {{token}}
+Accept: application/json
+
+###
+# 4. Создать новый пост (защищённый эндпоинт)
+POST {{baseUrl}}/posts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "post": {
+    "title": "Заголовок поста",
+    "content": "Какое-то содержимое",
+    "img": "uploads/posts/1.jpg"
+  }
+}
+
+###
+# 5. Получить пост по slug
+GET {{baseUrl}}/posts/ura.-my-sdelali-eto!!!!-5
+Accept: application/json
+
+###
+# 6. Обновить пост (slug = "some-slug-1")
+PUT {{baseUrl}}/posts/some-slug-1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "post": {
+    "title": "Обновлённый заголовок",
+    "content": "Новое содержимое",
+    "img": "uploads/posts/2.jpg"
+  }
+}
+
+###
+# 7. Удалить пост (slug = "some-slug-1")
+DELETE {{baseUrl}}/posts/some-slug-1
+Authorization: Bearer {{token}}
+
+###
+# 8. Получить статистику (лайки, комментарии) по посту
+GET {{baseUrl}}/posts/some-slug-2/stats
+Accept: application/json
+
+###
+# 9. Добавить пост в избранное (slug = "some-slug-2")
+POST {{baseUrl}}/posts/some-slug-2/favorite
+Authorization: Bearer {{token}}
+
+###
+# 10. Удалить пост из избранного (slug = "some-slug-2")
+DELETE {{baseUrl}}/posts/some-slug-2/favorite
+Authorization: Bearer {{token}}
+
+###
+# 11. Загрузить/обновить картинку для поста (slug = "some-slug-3")
+#     В плагине REST Client не всегда поддерживается отправка файлов напрямую:
+#     - Либо используйте специальный синтаксис,
+#       либо используйте cURL/Postman и т.д.
+#
+# Пример запроса с указанием пути к файлу (в VSCode):
+# (Не во всех версиях REST Client работает корректно!)
+#
+# POST {{baseUrl}}/posts/some-slug-3/uploadImage
+# Authorization: Bearer {{token}}
+# Content-Type: multipart/form-data; boundary=---011000010111000001101001
+#
+# ---011000010111000001101001
+# Content-Disposition: form-data; name="image"; filename="пример-картинки.jpg"
+# Content-Type: image/jpeg
+#
+# < ./пример-картинки.jpg
+# ---011000010111000001101001--

@@ -72,7 +72,6 @@ export class CommentService {
   }
 
   async findCommentsBySlug(slug: string): Promise<CommentEntity[]> {
-    // Для удобства можно вместо "post.slug" просто делать JOIN. Но для простоты:
     const comments = await this.commentRepository.find({
       where: { post: { slug } },
       order: { createdAt: 'ASC' },

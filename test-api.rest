@@ -24,7 +24,7 @@ Content-Type: application/json
 # 3. Получение текущего пользователя (защищённый эндпоинт)
 GET {{baseUrl}}/user
 Authorization: Bearer {{token}}
-Accept: application/json###
+Accept: application/json
 
 ###
 # 3. Получение текущего пользователя (защищённый эндпоинт)

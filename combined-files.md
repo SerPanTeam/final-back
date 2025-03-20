@@ -85,7 +85,7 @@
 ├── .prettierrc
 ├── codewr.js
 ├── combined-files.md
-├── deploy.js
+├── Dockerfile
 ├── eslint.config.mjs
 ├── nest-cli.json
 ├── package-lock.json
@@ -98,103 +98,6 @@
 ```
 
 # Файлы .ts, .tsx, .css
-
-## deploy.js
-
-```javascript
-const FtpDeploy = require('ftp-deploy');
-const ftpDeploy = new FtpDeploy();
-
-// Выводим весь объект события при начале копирования
-ftpDeploy.on('uploading', (data) => {
-  console.log('Копируется файл:', JSON.stringify(data, null, 2));
-});
-
-// Выводим весь объект события после успешного копирования
-ftpDeploy.on('uploaded', (data) => {
-  console.log('Файл скопирован:', JSON.stringify(data, null, 2));
-});
-
-// Вывод логов для отладки
-ftpDeploy.on('log', (message) => {
-  console.log('Лог:', message);
-});
-
-// Обработчик ошибок (если требуется)
-ftpDeploy.on('error', (err) => {
-  console.error('Ошибка (событие error):', err);
-});
-
-const config = {
-  user: 'api@api.panchenko.work', // FTP логин
-  password: '36355693801', // FTP пароль
-  host: '185.67.3.96', // FTP-сервер
-  port: 21, // Явный порт FTPS
-  localRoot: __dirname, // Корневая папка проекта
-  remoteRoot: '/', // Путь на сервере, куда будут загружаться файлы
-  include: ['*', '**/*'], // Файлы, которые необходимо копировать
-  exclude: ['**/node_modules/**', '**/.git/**'], // исключаем node_modules и .git
-  deleteRemote: false, // Не удалять файлы на сервере, которых нет локально
-  forcePasv: true, // Режим Passive (иногда требуется для обхода firewall)
-};
-
-ftpDeploy.deploy(config, function (err) {
-  if (err) {
-    console.error('Ошибка при деплое:', err);
-  } else {
-    console.log('Деплой выполнен успешно!');
-  }
-});
-
-// const FtpDeploy = require('ftp-deploy');
-// const ftpDeploy = new FtpDeploy();
-
-// const config = {
-//   user: 'api@api.panchenko.work', // FTP логин
-//   password: '36355693801', // FTP пароль
-//   host: '185.67.3.96', // FTP-сервер
-//   port: 21, // Явный порт FTPS
-//   localRoot: __dirname, // Корневая папка проекта
-//   remoteRoot: '/', // Путь на сервере, куда будут загружаться файлы
-//   include: ['*', '**/*'], // Файлы, которые необходимо копировать
-//   exclude: ['**/node_modules/**', '**/.git/**'], // исключаем node_modules и .git
-//   deleteRemote: false, // Не удалять файлы на сервере, которых нет локально
-//   forcePasv: true, // Режим Passive (иногда требуется для обхода firewall)
-// };
-
-// ftpDeploy.deploy(config, function (err) {
-//   if (err) {
-//     console.error('Ошибка при деплое:', err);
-//   } else {
-//     console.log('Деплой выполнен успешно!');
-//   }
-// });
-
-// // const FtpDeploy = require('ftp-deploy');
-// // const ftpDeploy = new FtpDeploy();
-
-// // const config = {
-// //   user: 'api@api.panchenko.work', // FTP логин
-// //   password: '36355693801', // FTP пароль
-// //   host: '185.67.3.96', // FTP-сервер
-// //   port: 21, // Явный порт FTPS
-// //   localRoot: __dirname + '/', // Локальная папка с собранными файлами
-// //   remoteRoot: '/', // Путь на сервере, куда будут загружаться файлы
-// //   include: ['*', '**/*'], // Какие файлы копировать
-// //   exclude: ['node_modules', 'node_modules/**'], // Исключаем папку node_modules
-// //   deleteRemote: false, // Не удалять файлы на сервере, которых нет локально
-// //   forcePasv: true, // Режим Passive (часто требуется для обхода firewall)
-// // };
-
-// // ftpDeploy.deploy(config, function (err) {
-// //   if (err) {
-// //     console.error('Ошибка при деплое:', err);
-// //   } else {
-// //     console.log('Деплой выполнен успешно!');
-// //   }
-// // });
-
-```
 
 ## src\app.controller.spec.ts
 
@@ -1164,10 +1067,9 @@ export class CommentService {
   }
 
   async findCommentsBySlug(slug: string): Promise<CommentEntity[]> {
-    // Для удобства можно вместо "post.slug" просто делать JOIN. Но для простоты:
     const comments = await this.commentRepository.find({
       where: { post: { slug } },
-      order: { createdAt: 'ASC' },
+      order: { createdAt: 'DESC' },
     });
     return comments;
   }
@@ -1990,14 +1892,24 @@ export class PostService {
   }
 
   async checkIfFavorited(userId: number, postId: number): Promise<boolean> {
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-      relations: ['favorites'],
-    });
-    if (!user) {
-      throw new HttpException('Пользователь не найден', HttpStatus.NOT_FOUND);
-    }
-    return user.favorites.some((favorite) => favorite.id === postId);
+    // const user = await this.userRepository.findOne({
+    //   where: { id: userId },
+    //   relations: ['favorites'],
+    // });
+    // if (!user) {
+    //   throw new HttpException('Пользователь не найден', HttpStatus.NOT_FOUND);
+    // }
+    // return user.favorites.some((favorite) => favorite.id === postId);
+
+    const result = await this.userRepository
+      .createQueryBuilder('user') // Создаем запрос, называя основную сущность "user"
+      .leftJoinAndSelect('user.favorites', 'favorite') // Выполняем левое соединение с таблицей "favorites" и называем её "favorite"
+      .where('user.id = :userId', { userId }) // Указываем условие на ID пользователя
+      .andWhere('favorite.id = :postId', { postId }) // Указываем дополнительное условие на ID поста
+      .getOne(); // Получаем одну запись, соответствующую условиям
+
+    console.log('QueryBuilder result:', result); // Логируем результат
+    return !!result; // Возвращаем булево значение: true, если запись найдена, иначе false
   }
 }
 

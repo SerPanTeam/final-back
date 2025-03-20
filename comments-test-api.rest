@@ -1,0 +1,29 @@
+# Константы (при желании можете поменять или вынести в отдельный http environment)
+@baseUrl = https://api.panchenko.work
+@token = ВСТАВЬТЕ_СВОЙ_JWT_ТОКЕН_СЮДА
+
+###
+# 1. Получить все комментарии к посту
+#  - {slug} замените на реальный slug поста
+GET {{baseUrl}}/posts/ura.-my-sdelali-eto!!!!-5/comments
+Accept: application/json
+
+###
+# 2. Добавить новый комментарий (защищённый эндпоинт)
+#  - {slug} замените на реальный slug поста
+POST {{baseUrl}}/posts/slug-поста/comments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "comment": {
+    "body": "Отличная статья, спасибо!"
+  }
+}
+
+###
+# 3. Удалить комментарий по его ID (защищённый эндпоинт)
+#  - {slug} замените на реальный slug поста
+#  - {commentId} замените на реальный ID комментария
+DELETE {{baseUrl}}/posts/slug-поста/comments/commentId
+Authorization: Bearer {{token}}
